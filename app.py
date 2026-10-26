@@ -13,10 +13,11 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import media
 import subtitles
+import theme
 import transcriber as tr
 from cards import ALL, CardStore
 from saved import SavedStore
@@ -57,12 +58,55 @@ def stop_wav() -> None:
         winsound.PlaySound(None, 0)
 
 
+class TextPrompt(tk.Toplevel):
+    """Small modal dialog asking for one line of text, in the app's theme
+    (Tk's built-in simpledialog uses unthemed widgets)."""
+
+    def __init__(self, parent, title: str, prompt: str, initial: str = ""):
+        super().__init__(parent)
+        self.title(title)
+        theme.dark_title_bar(self)
+        self.resizable(False, False)
+        self.transient(parent)
+        self.result: str | None = None
+        body = ttk.Frame(self, padding=16)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=prompt).pack(anchor="w")
+        self.var = tk.StringVar(value=initial)
+        self.entry = ttk.Entry(body, textvariable=self.var, width=36, font=("Segoe UI", 11))
+        self.entry.pack(fill="x", pady=(6, 14))
+        buttons = ttk.Frame(body)
+        buttons.pack(fill="x")
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(buttons, text="OK", command=self._ok).pack(side="right", padx=6)
+        self.bind("<Return>", lambda e: self._ok())
+        self.bind("<Escape>", lambda e: self.destroy())
+        # centre over the parent window
+        self.update_idletasks()
+        top = parent.winfo_toplevel()
+        x = top.winfo_rootx() + (top.winfo_width() - self.winfo_reqwidth()) // 2
+        y = top.winfo_rooty() + (top.winfo_height() - self.winfo_reqheight()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        self.entry.focus_set()
+        self.entry.select_range(0, "end")
+        self.grab_set()
+
+    def _ok(self):
+        self.result = self.var.get()
+        self.destroy()
+
+
+def ask_text(parent, title: str, prompt: str, initial: str = "") -> str | None:
+    dlg = TextPrompt(parent, title, prompt, initial)
+    parent.wait_window(dlg)
+    return dlg.result
+
+
 def new_deck_dialog(parent, store: CardStore) -> dict | None:
     """Ask for a name and create a deck. Returns the deck, or None if cancelled."""
     name = ""
     while True:
-        name = simpledialog.askstring("New deck", "Name for the new deck:", parent=parent,
-                                      initialvalue=name)
+        name = ask_text(parent, "New deck", "Name for the new deck:", name)
         if name is None:
             return None
         try:
@@ -90,10 +134,10 @@ class PreviewPanel(ttk.Frame):
         self._image = None        # (path, PIL image) currently shown
 
         # fixed-size holder so the image never pushes the layout around
-        holder = tk.Frame(self, bg="#1e1e1e", width=420, height=image_height)
+        holder = tk.Frame(self, bg=theme.IMAGE_BG, width=420, height=image_height)
         holder.pack(fill="both", expand=True)
         holder.pack_propagate(False)
-        self.image_label = tk.Label(holder, bg="#1e1e1e", fg="#bbbbbb",
+        self.image_label = tk.Label(holder, bg=theme.IMAGE_BG, fg=theme.MUTED,
                                     text="Select a line to preview it", font=("Segoe UI", 10))
         self.image_label.pack(fill="both", expand=True)
         self.image_label.bind("<Configure>", lambda e: self._render())
@@ -104,14 +148,14 @@ class PreviewPanel(ttk.Frame):
         ttk.Label(self.details, textvariable=self.word_var,
                   font=("Segoe UI", 20, "bold")).pack(anchor="w")
         ttk.Label(self.details, textvariable=self.reading_var, font=("Segoe UI", 12),
-                  foreground="#555").pack(anchor="w")
+                  foreground=theme.MUTED).pack(anchor="w")
         self.def_label = ttk.Label(self.details, textvariable=self.def_var, font=("Segoe UI", 11),
                                    wraplength=420, justify="left")
         self.def_label.pack(anchor="w", fill="x", pady=(2, 0))
 
         self.meta_var = tk.StringVar()
         self.text_var = tk.StringVar()
-        self.meta_label = ttk.Label(self, textvariable=self.meta_var, foreground="#666")
+        self.meta_label = ttk.Label(self, textvariable=self.meta_var, foreground=theme.MUTED)
         self.meta_label.pack(anchor="w", pady=(8, 0))
         self.text_label = ttk.Label(self, textvariable=self.text_var, font=("Segoe UI", 14),
                                     wraplength=420, justify="left")
@@ -127,7 +171,7 @@ class PreviewPanel(ttk.Frame):
             ttk.Checkbutton(controls, text="Auto-play on select",
                             variable=autoplay_var).pack(side="left", padx=6)
             ttk.Label(self, text="Tip: ↑/↓ to move, Space or double-click to play.",
-                      foreground="#888").pack(anchor="w")
+                      foreground=theme.SUBTLE).pack(anchor="w")
 
     def _rewrap(self, e):
         w = max(e.width - 20, 200)
@@ -199,6 +243,7 @@ class CardEditor(tk.Toplevel):
                  on_decks_changed=None):
         super().__init__(parent)
         self.title(title)
+        theme.dark_title_bar(self)
         self.geometry("640x860")
         self.minsize(520, 600)
         self.transient(parent)
@@ -214,9 +259,9 @@ class CardEditor(tk.Toplevel):
         self.preview.text_label.pack_forget()  # the sentence is shown below, selectable
 
         ttk.Label(body, text="Sentence  (highlight a word, then click “Use selection”)",
-                  foreground="#666").pack(anchor="w", pady=(6, 2))
+                  foreground=theme.MUTED).pack(anchor="w", pady=(6, 2))
         self.sentence = tk.Text(body, height=3, wrap="word", font=("Segoe UI", 14),
-                                relief="flat", background="#f6f6f6")
+                                relief="flat", background=theme.SURFACE)
         self.sentence.insert("1.0", sentence)
         self.sentence.config(state="disabled")  # read-only but still selectable
         self.sentence.pack(fill="x")
@@ -252,7 +297,7 @@ class CardEditor(tk.Toplevel):
         buttons.pack(fill="x")
         ttk.Button(buttons, text="Cancel", command=self.cancel).pack(side="right")
         ttk.Button(buttons, text="Save card", command=self.save).pack(side="right", padx=6)
-        ttk.Label(buttons, text="Ctrl+Enter to save, Esc to cancel", foreground="#888").pack(side="left")
+        ttk.Label(buttons, text="Ctrl+Enter to save, Esc to cancel", foreground=theme.SUBTLE).pack(side="left")
 
         self.bind("<Control-Return>", lambda e: self.save())
         self.bind("<Escape>", lambda e: self.cancel())
@@ -332,6 +377,7 @@ class RecordWindow(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title(self.TITLE)
+        theme.dark_title_bar(self)
         self.geometry("1200x660")
         self.minsize(820, 440)
         self.autoplay_var = tk.BooleanVar(value=False)
@@ -343,7 +389,7 @@ class RecordWindow(tk.Toplevel):
         ttk.Label(top, text="Search:").pack(side="left")
         ttk.Entry(top, textvariable=self.search_var, width=32).pack(side="left", padx=6)
         self.search_var.trace_add("write", lambda *a: self.refresh())
-        ttk.Label(top, textvariable=self.count_var, foreground="#666").pack(side="left", padx=10)
+        ttk.Label(top, textvariable=self.count_var, foreground=theme.MUTED).pack(side="left", padx=10)
         self.add_filters(top)
 
         main = ttk.PanedWindow(self, orient="horizontal")
@@ -522,7 +568,7 @@ class SavedLinesWindow(RecordWindow):
         self.tree.bind("<Return>", lambda e: self.new_card())
         self.bind("<Control-n>", lambda e: self.new_card())
         ttk.Label(bar, text="Select a line, then New card (Enter / Ctrl+N)",
-                  foreground="#888").pack(side="right", padx=10)
+                  foreground=theme.SUBTLE).pack(side="right", padx=10)
 
     def new_card(self):
         e = self.focused()
@@ -709,7 +755,7 @@ class StudyScreen(ttk.Frame):
         head.pack(fill="x")
         ttk.Button(head, text="←  Main menu", command=app.show_home,
                    takefocus=False).pack(side="left")
-        ttk.Label(head, textvariable=self.progress_var, foreground="#666").pack(side="left", padx=12)
+        ttk.Label(head, textvariable=self.progress_var, foreground=theme.MUTED).pack(side="left", padx=12)
 
         card = ttk.Frame(self, padding=(24, 8, 24, 8))
         card.pack(fill="both", expand=True)
@@ -724,23 +770,23 @@ class StudyScreen(ttk.Frame):
                                 background=app.cget("background"), cursor="arrow",
                                 takefocus=False)
         self.sentence.tag_configure("center", justify="center")
-        self.sentence.tag_configure("target", foreground="#c0392b", font=("Segoe UI", 17, "bold"))
+        self.sentence.tag_configure("target", foreground=theme.TARGET, font=("Segoe UI", 17, "bold"))
         self.sentence.pack(fill="x")
 
         # ---- back (hidden until flipped)
         self.back = ttk.Frame(card)
-        ttk.Separator(self.back).pack(fill="x", pady=12)
+        theme.separator(self.back, pady=12)
         self.reading_var = tk.StringVar()
         self.def_var = tk.StringVar()
         ttk.Label(self.back, textvariable=self.reading_var, font=("Segoe UI", 15),
-                  foreground="#555", anchor="center").pack(fill="x")
+                  foreground=theme.MUTED, anchor="center").pack(fill="x")
         self.def_label = ttk.Label(self.back, textvariable=self.def_var, font=("Segoe UI", 14),
                                    justify="center", anchor="center", wraplength=700)
         self.def_label.pack(fill="x", pady=(6, 10))
-        holder = tk.Frame(self.back, bg="#1e1e1e", width=640, height=330)
+        holder = tk.Frame(self.back, bg=theme.IMAGE_BG, width=640, height=330)
         holder.pack(fill="both", expand=True)
         holder.pack_propagate(False)
-        self.image_label = tk.Label(holder, bg="#1e1e1e", fg="#bbbbbb", font=("Segoe UI", 10))
+        self.image_label = tk.Label(holder, bg=theme.IMAGE_BG, fg=theme.MUTED, font=("Segoe UI", 10))
         self.image_label.pack(fill="both", expand=True)
         self.image_label.bind("<Configure>", lambda e: self._render())
         self.replay_btn = ttk.Button(self.back, text="▶  Replay audio", command=self.replay,
@@ -757,7 +803,7 @@ class StudyScreen(ttk.Frame):
                                      takefocus=False)
         self.action_btn.pack()
         ttk.Label(bottom, text="Space / Enter: flip or next  ·  R: replay audio  ·  Esc: main menu",
-                  foreground="#888").pack(pady=(6, 0))
+                  foreground=theme.SUBTLE).pack(pady=(6, 0))
         self.show_front()
 
     # --- deck handling
@@ -897,6 +943,7 @@ class App(tk.Tk):
         self.title("Language Flashcards")
         self.geometry("1280x760")
         self.minsize(900, 520)
+        theme.apply(self)  # dark color scheme; must come before any widgets are built
 
         self.events: queue.Queue = queue.Queue()
         self.worker: threading.Thread | None = None
@@ -989,12 +1036,6 @@ class App(tk.Tk):
         self.bind("<Control-s>", lambda e: self.save_selected())
 
     def _build_ui(self):
-        style = ttk.Style(self)
-        if "vista" in style.theme_names():
-            style.theme_use("vista")
-        style.configure("Treeview", rowheight=26, font=("Segoe UI", 11))
-        style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
-
         pad = {"padx": 6, "pady": 4}
 
         # --- file row
@@ -1043,7 +1084,7 @@ class App(tk.Tk):
         prog.pack(fill="x")
         self.progress = ttk.Progressbar(prog, maximum=1000)
         self.progress.pack(fill="x")
-        ttk.Label(prog, textvariable=self.status_var, foreground="#444").pack(anchor="w", pady=(4, 0))
+        ttk.Label(prog, textvariable=self.status_var, foreground=theme.MUTED).pack(anchor="w", pady=(4, 0))
 
         # --- main area: [table / full text]  |  [preview]
         main = ttk.PanedWindow(self.create_screen, orient="horizontal")
@@ -1090,9 +1131,9 @@ class App(tk.Tk):
                                        command=self.save_selected, state="disabled")
         self.save_sel_btn.pack(side="left", padx=(6, 0))
         ttk.Button(selbar, text="View saved lines...", command=self.show_saved).pack(side="left", padx=6)
-        ttk.Label(selbar, textvariable=self.sel_var, foreground="#666").pack(side="left", padx=6)
+        ttk.Label(selbar, textvariable=self.sel_var, foreground=theme.MUTED).pack(side="left", padx=6)
         ttk.Label(selbar, text="Tick boxes to choose lines · Shift-click a box for a range · Enter ticks",
-                  foreground="#888").pack(side="right")
+                  foreground=theme.SUBTLE).pack(side="right")
 
         text_frame = ttk.Frame(left)
         hdr = ttk.Frame(text_frame)
@@ -1105,8 +1146,8 @@ class App(tk.Tk):
         self.text.configure(yscrollcommand=tsb.set)
         self.text.pack(side="left", fill="both", expand=True)
         tsb.pack(side="right", fill="y")
-        self.text.tag_configure("chk", background="#dcebff")
-        self.text.tag_configure("hl", background="#fff2a8")
+        self.text.tag_configure("chk", background=theme.CHECKED)
+        self.text.tag_configure("hl", background=theme.HIGHLIGHT)
         left.add(text_frame, weight=1)
 
         # --- preview panel
@@ -1124,7 +1165,7 @@ class App(tk.Tk):
         ttk.Button(bottom, text="Open output folder",
                    command=lambda: open_folder(OUTPUT_DIR)).pack(side="left")
         self.info_var = tk.StringVar()
-        ttk.Label(bottom, textvariable=self.info_var, foreground="#666").pack(side="right")
+        ttk.Label(bottom, textvariable=self.info_var, foreground=theme.MUTED).pack(side="right")
 
     # -------------------------------------------------------------- actions
     def browse(self):
@@ -1511,13 +1552,11 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------ screens
     def _build_home(self):
-        style = ttk.Style(self)
-        style.configure("Big.TButton", font=("Segoe UI", 18, "bold"), padding=(36, 22))
         box = ttk.Frame(self.home_screen)
         box.place(relx=0.5, rely=0.45, anchor="center")
         ttk.Label(box, text="Language Flashcards", font=("Segoe UI", 30, "bold")).pack()
         ttk.Label(box, text="Learn vocabulary from the videos, shows and songs you watch.",
-                  font=("Segoe UI", 12), foreground="#666").pack(pady=(4, 24))
+                  font=("Segoe UI", 12), foreground=theme.MUTED).pack(pady=(4, 24))
 
         # deck chooser: which deck Study uses (and the default deck for new cards)
         decks = ttk.Frame(box)
@@ -1540,9 +1579,9 @@ class App(tk.Tk):
         )):
             ttk.Button(row, text=label, style="Big.TButton", width=10,
                        command=cmd).grid(row=0, column=col, padx=24)
-            ttk.Label(row, text=desc, justify="center", foreground="#555",
+            ttk.Label(row, text=desc, justify="center", foreground=theme.MUTED,
                       font=("Segoe UI", 10)).grid(row=1, column=col, pady=(10, 0))
-        ttk.Label(box, textvariable=self.stats_var, foreground="#888",
+        ttk.Label(box, textvariable=self.stats_var, foreground=theme.SUBTLE,
                   font=("Segoe UI", 10)).pack(pady=(30, 0))
 
     def _show_screen(self, name: str):
@@ -1603,7 +1642,7 @@ class App(tk.Tk):
             return
         name = deck["name"]
         while True:
-            name = simpledialog.askstring("Rename deck", "New name:", parent=self, initialvalue=name)
+            name = ask_text(self, "Rename deck", "New name:", name)
             if name is None:
                 return
             try:
