@@ -20,6 +20,18 @@ Double-click **`run.bat`**. The app opens at the **main menu**:
 
 Switch screens any time with **Navigate → Main menu / Study / Create** (Ctrl+1 / Ctrl+2 / Ctrl+3).
 
+### Profiles
+
+- Each profile has its own **saved lines, cards and decks** (transcripts in `output\` are shared).
+- **Switch profile** (top right of the main menu) or **Navigate → Profiles** (Ctrl+4) opens the Profiles
+  screen: **Sign in** (or double-click), **New profile...**, **Rename...**, **Delete...**.
+- **★ Make default** chooses the profile signed in automatically when the app starts;
+  **No default (ask at startup)** makes the app open on the Profiles screen instead.
+- Deleting a profile permanently deletes its saved lines, cards and decks (you're asked first; the
+  profile you're signed in to can't be deleted).
+- Your data from before profiles existed is the **Main** profile (still in `saved\` and `cards\`);
+  new profiles keep their data in `profiles\<id>\`. The list is in `profiles.json`.
+
 On the Create screen: **Browse...** → pick a file → **Transcribe**.
 
 - Lines appear in the table as they're transcribed.
@@ -109,6 +121,7 @@ Command line alternative:
 - `media.py` — cuts audio clips (44.1 kHz WAV, with 0.2 s / 0.3 s padding) and screenshots.
 - `saved.py` — the saved-lines library.
 - `cards.py` — the flashcard deck.
+- `profiles.py` — user profiles and the default profile.
 - `subtitles.py` — reads .srt / .vtt / .ass subtitle files as lines.
 - `theme.py` — the dark color scheme; every color is defined at the top, so it's easy to adjust.
 - `app.py` — desktop window.

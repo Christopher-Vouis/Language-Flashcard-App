@@ -8,6 +8,7 @@ Run:  python app.py            (or double-click run.bat)
 from __future__ import annotations
 
 import os
+import json
 import queue
 import sys
 import threading
@@ -20,6 +21,7 @@ import subtitles
 import theme
 import transcriber as tr
 from cards import ALL, CardStore
+from profiles import ProfileStore
 from saved import SavedStore
 
 try:
@@ -34,8 +36,6 @@ except ImportError:  # not Windows
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output")
-SAVED_DIR = os.path.join(APP_DIR, "saved")
-CARDS_DIR = os.path.join(APP_DIR, "cards")
 UNCHECKED, CHECKED = "☐", "☑"
 
 MEDIA_TYPES = [
@@ -537,7 +537,9 @@ class SavedLinesWindow(RecordWindow):
         ("media", "Media", 55, False, "center"),
         ("cards", "Cards", 50, False, "center"),
     )
-    FOLDER = SAVED_DIR
+    @property
+    def FOLDER(self):  # noqa: N802 - the signed-in profile's saved-lines folder
+        return self.app.store.root
     WINDOW_ATTR = "saved_window"
 
     def records(self):
@@ -611,7 +613,9 @@ class CardsWindow(RecordWindow):
         ("decks", "Decks", 130, False, "w"),
         ("media", "Media", 55, False, "center"),
     )
-    FOLDER = CARDS_DIR
+    @property
+    def FOLDER(self):  # noqa: N802 - the signed-in profile's cards folder
+        return self.app.cards.root
     WINDOW_ATTR = "cards_window"
 
     def add_filters(self, top):
@@ -935,6 +939,14 @@ class StudyScreen(ttk.Frame):
     def leave(self):
         stop_wav()
 
+    def reset(self):
+        """Start over with the current profile's selected deck (after switching profile)."""
+        self.deck_id = self.app.cards.selected_deck
+        self.deck = []
+        self.reviewed = 0
+        self.flipped = False
+        self.sync()
+
 
 # ------------------------------------------------------------ main window
 class App(tk.Tk):
@@ -955,9 +967,13 @@ class App(tk.Tk):
         self.audio_paths: dict[int, str] = {}   # segment index -> wav path
         self.shot_paths: dict[int, str] = {}    # segment index -> jpg path
         self.media_total = 0
-        self.store = SavedStore(SAVED_DIR)
+        # Profiles: each has its own saved lines, cards and decks. Start with the
+        # default profile (or the first one, until the user picks on the Profiles screen).
+        self.profiles = ProfileStore(APP_DIR)
+        self.profile = self.profiles.get(self.profiles.default) or self.profiles.profiles[0]
+        self.store = SavedStore(self.profiles.saved_dir(self.profile))
         self.saved_window: SavedLinesWindow | None = None
-        self.cards = CardStore(CARDS_DIR)
+        self.cards = CardStore(self.profiles.cards_dir(self.profile))
         self.cards_window: CardsWindow | None = None
         self.current_screen = ""
         self.stats_var = tk.StringVar()
@@ -978,16 +994,21 @@ class App(tk.Tk):
         self.checked: set[int] = set()        # ticked line indices
         self._last_toggled: int | None = None  # anchor for Shift-click ranges
 
-        # Three screens share the main window; only one is shown at a time.
+        # The screens share the main window; only one is shown at a time.
         self.home_screen = ttk.Frame(self)
         self.create_screen = ttk.Frame(self)
+        self.profiles_screen = ttk.Frame(self)
         self._build_menu()
         self._build_ui()           # the Create screen
         self._build_home()
+        self._build_profiles()
         self.study_screen = StudyScreen(self, self)
         for key in ("<space>", "<Return>", "<KeyPress-r>", "<KeyPress-R>", "<Escape>"):
             self.bind(key, self._study_key)
-        self.show_create() if initial_file else self.show_home()
+        if not self.profiles.default:
+            self.show_profiles(startup=True)   # no default profile: ask who's using the app
+        else:
+            self.show_create() if initial_file else self.show_home()
         self.subs_var.trace_add("write", self._on_subs_changed)
         self.after(100, self._poll_events)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1008,7 +1029,7 @@ class App(tk.Tk):
         savedm.add_command(label="Save selected lines", command=self.save_selected, accelerator="Ctrl+S")
         savedm.add_command(label="Select all lines", command=self.select_all, accelerator="Ctrl+A")
         savedm.add_separator()
-        savedm.add_command(label="Open saved folder", command=lambda: open_folder(SAVED_DIR))
+        savedm.add_command(label="Open saved folder", command=lambda: open_folder(self.store.root))
         bar.add_cascade(label="Saved lines", menu=savedm)
 
         cardsm = tk.Menu(bar, tearoff=False)
@@ -1016,18 +1037,21 @@ class App(tk.Tk):
         cardsm.add_command(label="Study cards", command=self.show_study, accelerator="Ctrl+T")
         cardsm.add_command(label="New card from a saved line...", command=self.show_saved)
         cardsm.add_separator()
-        cardsm.add_command(label="Open cards folder", command=lambda: open_folder(CARDS_DIR))
+        cardsm.add_command(label="Open cards folder", command=lambda: open_folder(self.cards.root))
         bar.add_cascade(label="Cards", menu=cardsm)
 
         navm = tk.Menu(bar, tearoff=False)
         navm.add_command(label="Main menu", command=self.show_home, accelerator="Ctrl+1")
         navm.add_command(label="Study", command=self.show_study, accelerator="Ctrl+2")
         navm.add_command(label="Create", command=self.show_create, accelerator="Ctrl+3")
+        navm.add_separator()
+        navm.add_command(label="Profiles / switch user...", command=self.show_profiles, accelerator="Ctrl+4")
         bar.add_cascade(label="Navigate", menu=navm)
         self.config(menu=bar)
         self.bind_all("<Control-Key-1>", lambda e: self.show_home())
         self.bind_all("<Control-Key-2>", lambda e: self.show_study())
         self.bind_all("<Control-Key-3>", lambda e: self.show_create())
+        self.bind_all("<Control-Key-4>", lambda e: self.show_profiles())
 
         self.bind_all("<Control-o>", lambda e: (self.show_create(), self.browse()))
         self.bind_all("<Control-l>", lambda e: self.show_saved())
@@ -1552,6 +1576,11 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------ screens
     def _build_home(self):
+        who = ttk.Frame(self.home_screen)
+        who.place(relx=1.0, x=-16, y=12, anchor="ne")
+        self.signed_in_var = tk.StringVar()
+        ttk.Label(who, textvariable=self.signed_in_var, foreground=theme.MUTED).pack(side="left", padx=(0, 8))
+        ttk.Button(who, text="Switch profile", command=self.show_profiles).pack(side="left")
         box = ttk.Frame(self.home_screen)
         box.place(relx=0.5, rely=0.45, anchor="center")
         ttk.Label(box, text="Language Flashcards", font=("Segoe UI", 30, "bold")).pack()
@@ -1585,7 +1614,8 @@ class App(tk.Tk):
                   font=("Segoe UI", 10)).pack(pady=(30, 0))
 
     def _show_screen(self, name: str):
-        screens = {"home": self.home_screen, "create": self.create_screen, "study": self.study_screen}
+        screens = {"home": self.home_screen, "create": self.create_screen, "study": self.study_screen,
+                   "profiles": self.profiles_screen}
         if name == self.current_screen:
             return
         if self.current_screen == "study":
@@ -1595,9 +1625,176 @@ class App(tk.Tk):
         screens[name].pack(fill="both", expand=True)
         screens[name].focus_set()  # don't leave keyboard focus on a hidden screen's widget
         self.current_screen = name
-        self.title({"home": "Language Flashcards",
-                    "create": "Language Flashcards – Create",
-                    "study": "Language Flashcards – Study"}[name])
+        self._set_title()
+
+    def _set_title(self):
+        where = {"home": "", "create": " – Create", "study": " – Study",
+                 "profiles": " – Profiles"}.get(self.current_screen, "")
+        self.title(f"Language Flashcards{where}  ·  {self.profile['name']}")
+
+    # ------------------------------------------------------------ profiles
+    def _build_profiles(self):
+        box = ttk.Frame(self.profiles_screen)
+        box.place(relx=0.5, rely=0.45, anchor="center")
+        ttk.Label(box, text="Profiles", font=("Segoe UI", 26, "bold")).pack()
+        ttk.Label(box, text="Each profile has its own saved lines, cards and decks.",
+                  font=("Segoe UI", 11), foreground=theme.MUTED).pack(pady=(4, 18))
+
+        table = ttk.Frame(box)
+        table.pack(fill="x")
+        self.profile_tree = ttk.Treeview(table, columns=("name", "decks", "cards", "default"),
+                                         show="headings", selectmode="browse", height=8)
+        for col, label, w, anchor in (("name", "Profile", 260, "w"), ("decks", "Decks", 80, "center"),
+                                      ("cards", "Cards", 80, "center"),
+                                      ("default", "Signed in at startup", 170, "center")):
+            self.profile_tree.heading(col, text=label)
+            self.profile_tree.column(col, width=w, anchor=anchor, stretch=False)
+        self.profile_tree.pack(side="left")
+        ysb = ttk.Scrollbar(table, orient="vertical", command=self.profile_tree.yview)
+        self.profile_tree.configure(yscrollcommand=ysb.set)
+        ysb.pack(side="left", fill="y")
+        self.profile_tree.bind("<Double-1>", lambda e: self.sign_in_selected())
+        self.profile_tree.bind("<Return>", lambda e: (self.sign_in_selected(), "break")[1])
+
+        actions = ttk.Frame(box)
+        actions.pack(fill="x", pady=(12, 0))
+        ttk.Button(actions, text="Sign in", style="Big.TButton", width=8,
+                   command=self.sign_in_selected).pack(side="left")
+        manage = ttk.Frame(actions)
+        manage.pack(side="left", padx=(18, 0))
+        row1 = ttk.Frame(manage)
+        row1.pack(anchor="w")
+        ttk.Button(row1, text="New profile...", command=self.new_profile).pack(side="left")
+        ttk.Button(row1, text="Rename...", command=self.rename_profile).pack(side="left", padx=6)
+        ttk.Button(row1, text="Delete...", command=self.delete_profile).pack(side="left")
+        row2 = ttk.Frame(manage)
+        row2.pack(anchor="w", pady=(8, 0))
+        ttk.Button(row2, text="★  Make default", command=self.make_default_profile).pack(side="left")
+        ttk.Button(row2, text="No default (ask at startup)",
+                   command=lambda: self._set_default_profile("")).pack(side="left", padx=6)
+        self.default_note_var = tk.StringVar()
+        ttk.Label(box, textvariable=self.default_note_var, foreground=theme.SUBTLE).pack(pady=(14, 0))
+
+    @staticmethod
+    def _profile_counts(cards_dir: str) -> tuple[int, int]:
+        """(decks, cards) for a profile, read without loading it."""
+        try:
+            with open(os.path.join(cards_dir, "cards.json"), encoding="utf-8") as f:
+                data = json.load(f)
+            return len(data.get("decks", [])) or 1, len(data.get("cards", []))
+        except (OSError, ValueError):
+            return 1, 0
+
+    def _refresh_profiles(self):
+        tree = self.profile_tree
+        tree.delete(*tree.get_children())
+        for p in self.profiles.profiles:
+            decks, cards = self._profile_counts(self.profiles.cards_dir(p))
+            name = p["name"] + ("   (signed in)" if p["id"] == self.profile["id"] else "")
+            tree.insert("", "end", iid=p["id"], values=(
+                name, decks, cards, "★" if p["id"] == self.profiles.default else ""))
+        tree.selection_set(self.profile["id"])
+        tree.focus(self.profile["id"])
+        default = self.profiles.get(self.profiles.default)
+        self.default_note_var.set(
+            f"{default['name']} is signed in automatically when the app starts." if default
+            else "No default profile: you'll choose a profile each time the app starts.")
+
+    def show_profiles(self, startup: bool = False):
+        self._refresh_profiles()
+        self._show_screen("profiles")
+        self.profile_tree.focus_set()
+
+    def _selected_profile(self) -> dict | None:
+        sel = self.profile_tree.selection()
+        return self.profiles.get(sel[0]) if sel else None
+
+    def sign_in_selected(self):
+        p = self._selected_profile()
+        if p:
+            self.sign_in(p["id"])
+
+    def sign_in(self, profile_id: str):
+        """Switch to another profile's saved lines, cards and decks."""
+        p = self.profiles.get(profile_id)
+        if not p:
+            return
+        stop_wav()
+        if p["id"] != self.profile["id"]:
+            for win in (self.saved_window, self.cards_window):
+                if win and win.winfo_exists():
+                    win.close()
+            self.profile = p
+            self.store = SavedStore(self.profiles.saved_dir(p))
+            self.cards = CardStore(self.profiles.cards_dir(p))
+            self.study_screen.reset()
+            self._mark_saved()  # ★ marks on the Create screen are per profile
+            if self.transcript:
+                self.status_var.set(f"Signed in as {p['name']}. Saved lines now go to this profile.")
+        self.show_home()
+        self._set_title()
+
+    def _ask_profile_name(self, title: str, prompt: str, initial: str, action) -> bool:
+        name = initial
+        while True:
+            name = ask_text(self, title, prompt, name)
+            if name is None:
+                return False
+            try:
+                action(name)
+                return True
+            except ValueError as e:
+                messagebox.showwarning(title, str(e), parent=self)
+
+    def new_profile(self):
+        created = {}
+        if self._ask_profile_name("New profile", "Name for the new profile:", "",
+                                  lambda n: created.update(self.profiles.add(n))):
+            self._refresh_profiles()
+            self.profile_tree.selection_set(created["id"])
+            self.profile_tree.focus(created["id"])
+
+    def rename_profile(self):
+        p = self._selected_profile()
+        if p and self._ask_profile_name("Rename profile", "New name:", p["name"],
+                                        lambda n: self.profiles.rename(p["id"], n)):
+            self._refresh_profiles()
+            self._update_home()
+            self._set_title()
+
+    def delete_profile(self):
+        p = self._selected_profile()
+        if not p:
+            return
+        if p["id"] == self.profile["id"]:
+            messagebox.showinfo("Delete profile", "You can't delete the profile you're signed in to. "
+                                "Sign in to another profile first.", parent=self)
+            return
+        decks, cards = self._profile_counts(self.profiles.cards_dir(p))
+        if not messagebox.askyesno(
+                "Delete profile",
+                f'Permanently delete the profile "{p["name"]}"?\n\n'
+                f"Its {cards} card{'s' if cards != 1 else ''}, {decks} deck{'s' if decks != 1 else ''} "
+                "and all its saved lines (with their clips and screenshots) will be deleted. "
+                "This can't be undone.", icon="warning", parent=self):
+            return
+        try:
+            self.profiles.delete(p["id"])
+        except ValueError as e:
+            messagebox.showwarning("Delete profile", str(e), parent=self)
+        self._refresh_profiles()
+
+    def make_default_profile(self):
+        p = self._selected_profile()
+        if p:
+            self._set_default_profile(p["id"])
+
+    def _set_default_profile(self, profile_id: str):
+        self.profiles.set_default(profile_id)
+        sel = self.profile_tree.selection()
+        self._refresh_profiles()
+        if sel and self.profile_tree.exists(sel[0]):
+            self.profile_tree.selection_set(sel[0])
 
     def _raise_main(self):
         self.deiconify()
@@ -1611,6 +1808,7 @@ class App(tk.Tk):
     # ------------------------------------------------------------- decks
     def _update_home(self):
         """Refresh the main menu's deck list and counts."""
+        self.signed_in_var.set(f"Signed in as {self.profile['name']}")
         cards = self.cards
         self._home_deck_ids = [ALL] + [d["id"] for d in cards.decks]
         self.home_deck_combo.config(values=[

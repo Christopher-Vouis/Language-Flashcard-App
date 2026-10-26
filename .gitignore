@@ -3,6 +3,8 @@
 output/
 saved/
 cards/
+profiles/
+profiles.json
 *.wav
 *.jpg
 *.jpeg
