@@ -1,0 +1,5 @@
+faster-whisper>=1.1.0
+# PyAV 19 removed av.open(metadata_errors=...); transcriber.py decodes audio itself, so any PyAV works
+av>=11
+# screenshots
+Pillow>=10

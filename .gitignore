@@ -1,0 +1,22 @@
+# --- Data the app creates: transcripts, audio clips, screenshots, saved lines, cards.
+# These hold clips from the videos you transcribe and stay on your PC only.
+output/
+saved/
+cards/
+*.wav
+*.jpg
+*.jpeg
+*.png
+*.mp3
+*.mp4
+*.mkv
+*.mov
+*.webm
+
+# --- Local environment
+.venv/
+__pycache__/
+*.pyc
+.vs/
+.vscode/
+*.tmp
