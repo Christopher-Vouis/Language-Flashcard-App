@@ -28,8 +28,10 @@ Double-click **`run.bat`** → **Browse...** → pick a file → **Transcribe**.
 
 ### Saving lines
 
-- After transcription finishes, pick lines with **Ctrl-click / Shift-click** (or **Select all**, Ctrl+A),
-  then **★ Save selected lines** (Ctrl+S). Saved lines get a ★ in the table; saving a line twice is ignored.
+- After transcription finishes, tick the **☐** box of each line you want (Shift-click a box to tick a
+  range, Enter ticks the highlighted line, the ☐ column header or **Select all** / Ctrl+A ticks every line),
+  then **★ Save selected lines** (Ctrl+S). Clicking elsewhere on a row only changes the preview.
+  Ticked lines are tinted blue in the full transcript. Saved lines get a ★; saving a line twice is ignored.
 - **Saved lines → View saved lines...** (Ctrl+L) opens your collection from every file you've transcribed.
   Click a line to see its screenshot, **▶ Play** / Space / double-click to hear it, search by text,
   and **Delete selected** to remove lines.

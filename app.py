@@ -34,6 +34,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output")
 SAVED_DIR = os.path.join(APP_DIR, "saved")
 CARDS_DIR = os.path.join(APP_DIR, "cards")
+UNCHECKED, CHECKED = "☐", "☑"
 
 MEDIA_TYPES = [
     ("Audio / video", "*.mp3 *.wav *.m4a *.flac *.ogg *.opus *.aac *.wma "
@@ -782,6 +783,8 @@ class App(tk.Tk):
         self.music_var = tk.BooleanVar(value=False)
         self.autoplay_var = tk.BooleanVar(value=False)
         self.sel_var = tk.StringVar()
+        self.checked: set[int] = set()        # ticked line indices
+        self._last_toggled: int | None = None  # anchor for Shift-click ranges
 
         self._build_menu()
         self._build_ui()
@@ -877,17 +880,21 @@ class App(tk.Tk):
         table_frame = ttk.Frame(left)
         selbar = ttk.Frame(table_frame, padding=(0, 4, 0, 4))
         selbar.pack(side="bottom", fill="x")
-        self.tree = ttk.Treeview(table_frame, columns=("saved", "start", "end", "media", "text"),
-                                 show="headings", selectmode="extended")
+        # The ☐/☑ column chooses lines (for saving); clicking elsewhere on a row
+        # just picks which line is shown in the preview.
+        self.tree = ttk.Treeview(table_frame, columns=("check", "saved", "text", "start", "end", "media"),
+                                 show="headings", selectmode="browse")
         for col, label, w, stretch, anchor in (
+            ("check", UNCHECKED, 34, False, "center"),
             ("saved", "★", 30, False, "center"),
+            ("text", "Text", 500, True, "w"),
             ("start", "Start", 105, False, "center"),
             ("end", "End", 105, False, "center"),
             ("media", "Media", 60, False, "center"),
-            ("text", "Text", 500, True, "w"),
         ):
             self.tree.heading(col, text=label)
             self.tree.column(col, width=w, stretch=stretch, anchor=anchor)
+        self.tree.heading("check", command=self._toggle_all)
         ysb = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=ysb.set)
         self.tree.pack(side="left", fill="both", expand=True)
@@ -896,6 +903,9 @@ class App(tk.Tk):
         self.tree.bind("<Double-1>", lambda e: self.preview.play())
         self.tree.bind("<space>", lambda e: (self.preview.play(), "break")[1])
         self.tree.bind("<Control-a>", lambda e: (self.select_all(), "break")[1])
+        self.tree.bind("<Button-1>", self._on_tree_click)
+        self.tree.bind("<Shift-Button-1>", lambda e: self._on_tree_click(e, shift=True))
+        self.tree.bind("<Return>", lambda e: self._toggle_focused())
         left.add(table_frame, weight=3)
 
         # selection bar under the table
@@ -906,7 +916,7 @@ class App(tk.Tk):
         self.save_sel_btn.pack(side="left", padx=(6, 0))
         ttk.Button(selbar, text="View saved lines...", command=self.show_saved).pack(side="left", padx=6)
         ttk.Label(selbar, textvariable=self.sel_var, foreground="#666").pack(side="left", padx=6)
-        ttk.Label(selbar, text="Ctrl/Shift-click to pick several lines",
+        ttk.Label(selbar, text="Tick boxes to choose lines · Shift-click a box for a range · Enter ticks",
                   foreground="#888").pack(side="right")
 
         text_frame = ttk.Frame(left)
@@ -920,6 +930,7 @@ class App(tk.Tk):
         self.text.configure(yscrollcommand=tsb.set)
         self.text.pack(side="left", fill="both", expand=True)
         tsb.pack(side="right", fill="y")
+        self.text.tag_configure("chk", background="#dcebff")
         self.text.tag_configure("hl", background="#fff2a8")
         left.add(text_frame, weight=1)
 
@@ -1020,7 +1031,8 @@ class App(tk.Tk):
                 elif kind == "segment":
                     seg, p = ev[1], ev[2]
                     self.tree.insert("", "end", iid=str(seg.index),
-                                     values=("", tr.fmt_time(seg.start), tr.fmt_time(seg.end), "", seg.text))
+                                     values=(UNCHECKED, "", seg.text, tr.fmt_time(seg.start),
+                                             tr.fmt_time(seg.end), ""))
                     if not self.tree.selection():
                         self.tree.yview_moveto(1.0)
                     self.progress["value"] = p * 1000
@@ -1101,6 +1113,9 @@ class App(tk.Tk):
         self.info_var.set("")
         self._partial = []
         self.audio_paths.clear()
+        self.checked.clear()
+        self._last_toggled = None
+        self.tree.heading("check", text=UNCHECKED)
         self.shot_paths.clear()
         self.media_total = 0
         self.preview.clear()
@@ -1145,10 +1160,14 @@ class App(tk.Tk):
             self.preview.play()
 
     def _highlight_selection(self):
+        """Full transcript: ticked lines in light blue, the previewed line in yellow."""
         self.text.tag_remove("hl", "1.0", "end")
-        for iid in self.tree.selection():
-            line = int(iid) + 1
-            self.text.tag_add("hl", f"{line}.0", f"{line}.end")
+        self.text.tag_remove("chk", "1.0", "end")
+        for index in self.checked:
+            self.text.tag_add("chk", f"{index + 1}.0", f"{index + 1}.end")
+        index = self._focused_index()
+        if index is not None:
+            self.text.tag_add("hl", f"{index + 1}.0", f"{index + 1}.end")
 
     def _show_preview(self, index: int):
         seg = self._segment(index)
@@ -1164,15 +1183,58 @@ class App(tk.Tk):
             placeholder=placeholder,
         )
 
+    # --------------------------------------------------------- checkboxes
+    def _set_checked(self, indices, value: bool):
+        for index in indices:
+            iid = str(index)
+            if not self.tree.exists(iid):
+                continue
+            (self.checked.add if value else self.checked.discard)(index)
+            self.tree.set(iid, "check", CHECKED if value else UNCHECKED)
+        all_rows = self.tree.get_children()
+        self.tree.heading("check", text=CHECKED if all_rows and len(self.checked) == len(all_rows)
+                          else UNCHECKED)
+        self._highlight_selection()
+        self._update_selection_ui()
+
+    def _on_tree_click(self, event, shift: bool = False):
+        """Clicks in the ☐ column tick/untick; elsewhere, normal row selection."""
+        if self.tree.identify_region(event.x, event.y) != "cell" or \
+                self.tree.identify_column(event.x) != "#1":
+            return None
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            return None
+        index = int(iid)
+        new_value = index not in self.checked
+        if shift and self._last_toggled is not None:
+            lo, hi = sorted((self._last_toggled, index))
+            self._set_checked(range(lo, hi + 1), new_value)
+        else:
+            self._set_checked([index], new_value)
+        self._last_toggled = index
+        return "break"  # don't move the preview when only ticking a box
+
+    def _toggle_focused(self):
+        index = self._focused_index()
+        if index is not None:
+            self._set_checked([index], index not in self.checked)
+            self._last_toggled = index
+        return "break"
+
+    def _toggle_all(self):
+        rows = [int(i) for i in self.tree.get_children()]
+        self._set_checked(rows, len(self.checked) < len(rows))
+
     # --------------------------------------------------------- saving lines
     def select_all(self):
-        self.tree.selection_set(self.tree.get_children())
+        self._set_checked([int(i) for i in self.tree.get_children()], True)
 
     def select_none(self):
-        self.tree.selection_remove(self.tree.selection())
+        self._set_checked(list(self.checked), False)
 
     def _update_selection_ui(self):
-        n = len(self.tree.selection())
+        n = len(self.checked)
         ready = self.transcript is not None and not (self.worker and self.worker.is_alive())
         self.save_sel_btn.config(state="normal" if ready and n else "disabled")
         self.sel_var.set(f"{n} selected" if n else "")
@@ -1184,10 +1246,10 @@ class App(tk.Tk):
             return
         if not self.transcript:
             return
-        ids = sorted(int(i) for i in self.tree.selection())
+        ids = sorted(self.checked)
         if not ids:
-            messagebox.showinfo("No lines selected", "Select one or more lines first "
-                                "(Ctrl/Shift-click, or Select all).")
+            messagebox.showinfo("No lines selected", "Tick the boxes of one or more lines first "
+                                "(or click Select all).")
             return
         segs = [self.transcript.segments[i] for i in ids]
         try:
