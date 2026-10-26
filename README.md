@@ -26,6 +26,18 @@ Double-click **`run.bat`** → **Browse...** → pick a file → **Transcribe**.
   - `media\<name>_0001.wav`, `media\<name>_0001.jpg`, ... (one per line)
 - **Save as...** also exports `.vtt`.
 
+### Using a subtitle file instead of AI transcription
+
+- Under the file row, choose a **Subtitles (optional)** file (`.srt`, `.vtt`, `.ass` or `.ssa`).
+  The main button changes to **Use subtitles**: each subtitle becomes a line, with its timing, and
+  audio clips and screenshots are cut for it exactly as for transcribed lines. **Clear** goes back to AI
+  transcription. Model, Device and Music mode are ignored when subtitles are used.
+- **Offset (s)** shifts all subtitles if they're out of sync: positive = later (subtitles appear too
+  early), negative = earlier.
+- Multi-line subtitles are joined into one line and formatting tags are removed. UTF-8/UTF-16 files
+  work as is; for older encodings (e.g. Shift-JIS) set **Language** so the right one is used.
+- CLI: `--subs file.srt [--subs-offset 1.5]`.
+
 ### Saving lines
 
 - After transcription finishes, tick the **☐** box of each line you want (Shift-click a box to tick a
@@ -82,5 +94,6 @@ Command line alternative:
 - `media.py` — cuts audio clips (44.1 kHz WAV, with 0.2 s / 0.3 s padding) and screenshots.
 - `saved.py` — the saved-lines library.
 - `cards.py` — the flashcard deck.
+- `subtitles.py` — reads .srt / .vtt / .ass subtitle files as lines.
 - `app.py` — desktop window.
 - `transcribe_cli.py` — command-line version.

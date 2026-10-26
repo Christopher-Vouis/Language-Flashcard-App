@@ -16,6 +16,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import media
+import subtitles
 import transcriber as tr
 from cards import CardStore
 from saved import SavedStore
@@ -781,6 +782,9 @@ class App(tk.Tk):
         self.ts_var = tk.BooleanVar(value=True)
         self.media_var = tk.BooleanVar(value=True)
         self.music_var = tk.BooleanVar(value=False)
+        self.subs_var = tk.StringVar()
+        self.subs_offset_var = tk.StringVar(value="0.0")
+        self.used_subs = False
         self.autoplay_var = tk.BooleanVar(value=False)
         self.sel_var = tk.StringVar()
         self.checked: set[int] = set()        # ticked line indices
@@ -788,6 +792,7 @@ class App(tk.Tk):
 
         self._build_menu()
         self._build_ui()
+        self.subs_var.trace_add("write", self._on_subs_changed)
         self.after(100, self._poll_events)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -841,6 +846,18 @@ class App(tk.Tk):
         ttk.Entry(top, textvariable=self.file_var).pack(side="left", fill="x", expand=True, **pad)
         ttk.Button(top, text="Browse...", command=self.browse).pack(side="left")
 
+        # --- subtitles row (optional): use a subtitle file's lines instead of AI transcription
+        subs = ttk.Frame(self, padding=(10, 2, 10, 0))
+        subs.pack(fill="x")
+        ttk.Label(subs, text="Subtitles (optional):").pack(side="left")
+        ttk.Entry(subs, textvariable=self.subs_var).pack(side="left", fill="x", expand=True, **pad)
+        ttk.Button(subs, text="Browse...", command=self.browse_subs).pack(side="left")
+        ttk.Button(subs, text="Clear", width=6,
+                   command=lambda: self.subs_var.set("")).pack(side="left", padx=(6, 0))
+        ttk.Label(subs, text="Offset (s):").pack(side="left", padx=(12, 0))
+        ttk.Spinbox(subs, textvariable=self.subs_offset_var, from_=-600, to=600,
+                    increment=0.1, width=6).pack(side="left", padx=(4, 0))
+
         # --- options row
         opts = ttk.Frame(self, padding=(10, 4, 10, 4))
         opts.pack(fill="x")
@@ -858,7 +875,7 @@ class App(tk.Tk):
         ttk.Checkbutton(opts, text="Audio clips + screenshots",
                         variable=self.media_var).pack(side="left", padx=(10, 0))
 
-        self.go_btn = ttk.Button(opts, text="Transcribe", command=self.start)
+        self.go_btn = ttk.Button(opts, text="Transcribe", command=self.start, width=14)
         self.go_btn.pack(side="left", padx=(16, 4))
         self.stop_btn = ttk.Button(opts, text="Stop", command=self.stop, state="disabled")
         self.stop_btn.pack(side="left")
@@ -957,6 +974,18 @@ class App(tk.Tk):
         if path:
             self.file_var.set(path)
 
+    def browse_subs(self):
+        start_dir = os.path.dirname(self.file_var.get().strip().strip('"')) or None
+        path = filedialog.askopenfilename(title="Choose a subtitle file",
+                                          filetypes=subtitles.SUB_TYPES, initialdir=start_dir)
+        if path:
+            self.subs_var.set(path)
+
+    def _on_subs_changed(self, *_):
+        """The main button says what will happen: AI transcription or subtitles."""
+        if not (self.worker and self.worker.is_alive()):
+            self.go_btn.config(text="Use subtitles" if self.subs_var.get().strip() else "Transcribe")
+
     def _language_code(self) -> str | None:
         val = self.lang_var.get().strip()
         if val in tr.LANGUAGES:
@@ -968,6 +997,17 @@ class App(tk.Tk):
         if not path or not os.path.isfile(path):
             messagebox.showwarning("No file", "Please choose an existing audio or video file.")
             return
+        subs_path = self.subs_var.get().strip().strip('"')
+        if subs_path and not os.path.isfile(subs_path):
+            messagebox.showwarning("Subtitle file not found",
+                                   "The subtitle file doesn't exist. Choose another, or click Clear "
+                                   "to transcribe with AI instead.")
+            return
+        try:
+            subs_offset = float(self.subs_offset_var.get().strip() or 0) if subs_path else 0.0
+        except ValueError:
+            messagebox.showwarning("Offset", "The subtitle offset must be a number of seconds, e.g. 1.5 or -0.8.")
+            return
         stop_wav()
         self._clear_results()
         self.stop_flag.clear()
@@ -977,9 +1017,11 @@ class App(tk.Tk):
         self.copy_btn.config(state="disabled")
         self.started_at = time.time()
 
-        self.music_used = self.music_var.get()
+        self.used_subs = bool(subs_path)
+        self.music_used = self.music_var.get() and not subs_path
         args = (path, self.model_var.get(), self._language_code(),
-                self.device_var.get(), self.media_var.get(), self.music_var.get())
+                self.device_var.get(), self.media_var.get(), self.music_used,
+                subs_path, subs_offset)
         self.worker = threading.Thread(target=self._run, args=args, daemon=True)
         self.worker.start()
 
@@ -987,17 +1029,24 @@ class App(tk.Tk):
         self.stop_flag.set()
         self.status_var.set("Stopping...")
 
-    def _run(self, path, model, lang, device, want_media, music):
+    def _run(self, path, model, lang, device, want_media, music, subs_path="", subs_offset=0.0):
         """Runs in a background thread; talks to the UI via self.events."""
         put = self.events.put
         try:
-            result = tr.transcribe(
-                path, model_size=model, language=lang, device=device,
-                on_segment=lambda seg, p: put(("segment", seg, p)),
-                on_status=lambda m: put(("status", m)),
-                should_stop=self.stop_flag.is_set,
-                music=music,
-            )
+            if subs_path:  # lines come from the subtitle file, no AI transcription
+                result = subtitles.load(
+                    path, subs_path, language=lang, offset=subs_offset,
+                    on_segment=lambda seg, p: put(("segment", seg, p)),
+                    on_status=lambda m: put(("status", m)),
+                )
+            else:
+                result = tr.transcribe(
+                    path, model_size=model, language=lang, device=device,
+                    on_segment=lambda seg, p: put(("segment", seg, p)),
+                    on_status=lambda m: put(("status", m)),
+                    should_stop=self.stop_flag.is_set,
+                    music=music,
+                )
             base = media.safe_name(os.path.splitext(os.path.basename(path))[0])
             out_dir = os.path.join(OUTPUT_DIR, base)
             os.makedirs(out_dir, exist_ok=True)
@@ -1075,11 +1124,17 @@ class App(tk.Tk):
             f"Done: {len(result.segments)} lines{extra} in {elapsed:.0f}s. Saved to {rel}\\  "
             f"Select lines and click ★ Save selected lines to keep them."
         )
-        self.info_var.set(
-            f"Language: {result.language} ({result.language_probability:.0%})  |  "
-            f"Length: {tr.fmt_time(result.duration)}  |  Model: {result.model}"
-            + ("  |  Music mode" if self.music_used else "")
-        )
+        if self.used_subs:
+            self.info_var.set(
+                f"Lines from {result.model.split(': ', 1)[-1]}  |  Length: {tr.fmt_time(result.duration)}"
+                + (f"  |  Language: {result.language}" if result.language else "")
+            )
+        else:
+            self.info_var.set(
+                f"Language: {result.language} ({result.language_probability:.0%})  |  "
+                f"Length: {tr.fmt_time(result.duration)}  |  Model: {result.model}"
+                + ("  |  Music mode" if self.music_used else "")
+            )
         self._reset_buttons(done=True)
         self._mark_saved()
         self._update_selection_ui()
@@ -1098,7 +1153,8 @@ class App(tk.Tk):
         messagebox.showerror("Transcription failed", msg)
 
     def _reset_buttons(self, done: bool):
-        self.go_btn.config(state="normal")
+        self.go_btn.config(state="normal",
+                           text="Use subtitles" if self.subs_var.get().strip() else "Transcribe")
         self.stop_btn.config(state="disabled")
         state = "normal" if done and self.transcript and self.transcript.segments else "disabled"
         self.save_btn.config(state=state)
