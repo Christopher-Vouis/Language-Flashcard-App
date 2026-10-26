@@ -551,17 +551,15 @@ class CardsWindow(RecordWindow):
 
 
 # ------------------------------------------------------------ study mode
-class StudyWindow(tk.Toplevel):
+class StudyScreen(ttk.Frame):
     """Go through the cards one at a time: front (word + sentence) → flip →
     back (reading, definition, screenshot, audio) → next card. A finished
-    card goes to the bottom of the stack."""
+    card goes to the bottom of the stack. Shown inside the main window;
+    its keys (Space/Enter/R/Esc) are routed here by App._study_key."""
 
-    def __init__(self, app: "App"):
-        super().__init__(app)
+    def __init__(self, parent, app: "App"):
+        super().__init__(parent)
         self.app = app
-        self.title("Study")
-        self.geometry("820x860")
-        self.minsize(600, 620)
         self.deck: list[str] = [c["id"] for c in app.cards.cards]  # top of stack = deck[0]
         self.reviewed = 0
         self.flipped = False
@@ -570,8 +568,11 @@ class StudyWindow(tk.Toplevel):
         self._audio = ""
 
         self.progress_var = tk.StringVar()
-        ttk.Label(self, textvariable=self.progress_var, foreground="#666",
-                  padding=(12, 10, 12, 0)).pack(anchor="w")
+        head = ttk.Frame(self, padding=(12, 10, 12, 0))
+        head.pack(fill="x")
+        ttk.Button(head, text="←  Main menu", command=app.show_home,
+                   takefocus=False).pack(side="left")
+        ttk.Label(head, textvariable=self.progress_var, foreground="#666").pack(side="left", padx=12)
 
         card = ttk.Frame(self, padding=(24, 8, 24, 8))
         card.pack(fill="both", expand=True)
@@ -583,7 +584,7 @@ class StudyWindow(tk.Toplevel):
                   anchor="center").pack(fill="x", pady=(16, 8))
         self.sentence = tk.Text(card, height=3, wrap="word", font=("Segoe UI", 17),
                                 relief="flat", borderwidth=0, highlightthickness=0,
-                                background=self.cget("background"), cursor="arrow",
+                                background=app.cget("background"), cursor="arrow",
                                 takefocus=False)
         self.sentence.tag_configure("center", justify="center")
         self.sentence.tag_configure("target", foreground="#c0392b", font=("Segoe UI", 17, "bold"))
@@ -618,16 +619,9 @@ class StudyWindow(tk.Toplevel):
         self.action_btn = ttk.Button(bottom, text="Flip", command=self.advance, width=20,
                                      takefocus=False)
         self.action_btn.pack()
-        ttk.Label(bottom, text="Space / Enter: flip or next  ·  R: replay audio  ·  Esc: close",
+        ttk.Label(bottom, text="Space / Enter: flip or next  ·  R: replay audio  ·  Esc: main menu",
                   foreground="#888").pack(pady=(6, 0))
-
-        self.bind("<space>", lambda e: self.advance())
-        self.bind("<Return>", lambda e: self.advance())
-        self.bind("<KeyPress-r>", lambda e: self.replay())
-        self.bind("<Escape>", lambda e: self.close())
-        self.protocol("WM_DELETE_WINDOW", self.close)
         self.show_front()
-        self.focus_force()
 
     # --- deck handling
     def sync(self):
@@ -741,20 +735,15 @@ class StudyWindow(tk.Toplevel):
         if self.flipped:
             play_wav(self._audio)
 
-    def refresh(self):  # used by App._open_window when re-focusing
-        self.sync()
-
-    def close(self):
+    def leave(self):
         stop_wav()
-        self.app.study_window = None
-        self.destroy()
 
 
 # ------------------------------------------------------------ main window
 class App(tk.Tk):
     def __init__(self, initial_file: str | None = None):
         super().__init__()
-        self.title("Multilingual Transcriber")
+        self.title("Language Flashcards")
         self.geometry("1280x760")
         self.minsize(900, 520)
 
@@ -772,7 +761,8 @@ class App(tk.Tk):
         self.saved_window: SavedLinesWindow | None = None
         self.cards = CardStore(CARDS_DIR)
         self.cards_window: CardsWindow | None = None
-        self.study_window: StudyWindow | None = None
+        self.current_screen = ""
+        self.stats_var = tk.StringVar()
 
         self.file_var = tk.StringVar(value=initial_file or "")
         self.model_var = tk.StringVar(value="small")
@@ -790,8 +780,16 @@ class App(tk.Tk):
         self.checked: set[int] = set()        # ticked line indices
         self._last_toggled: int | None = None  # anchor for Shift-click ranges
 
+        # Three screens share the main window; only one is shown at a time.
+        self.home_screen = ttk.Frame(self)
+        self.create_screen = ttk.Frame(self)
         self._build_menu()
-        self._build_ui()
+        self._build_ui()           # the Create screen
+        self._build_home()
+        self.study_screen = StudyScreen(self, self)
+        for key in ("<space>", "<Return>", "<KeyPress-r>", "<KeyPress-R>", "<Escape>"):
+            self.bind(key, self._study_key)
+        self.show_create() if initial_file else self.show_home()
         self.subs_var.trace_add("write", self._on_subs_changed)
         self.after(100, self._poll_events)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -817,14 +815,23 @@ class App(tk.Tk):
 
         cardsm = tk.Menu(bar, tearoff=False)
         cardsm.add_command(label="View cards...", command=self.show_cards, accelerator="Ctrl+K")
-        cardsm.add_command(label="Study cards...", command=self.show_study, accelerator="Ctrl+T")
+        cardsm.add_command(label="Study cards", command=self.show_study, accelerator="Ctrl+T")
         cardsm.add_command(label="New card from a saved line...", command=self.show_saved)
         cardsm.add_separator()
         cardsm.add_command(label="Open cards folder", command=lambda: open_folder(CARDS_DIR))
         bar.add_cascade(label="Cards", menu=cardsm)
-        self.config(menu=bar)
 
-        self.bind_all("<Control-o>", lambda e: self.browse())
+        navm = tk.Menu(bar, tearoff=False)
+        navm.add_command(label="Main menu", command=self.show_home, accelerator="Ctrl+1")
+        navm.add_command(label="Study", command=self.show_study, accelerator="Ctrl+2")
+        navm.add_command(label="Create", command=self.show_create, accelerator="Ctrl+3")
+        bar.add_cascade(label="Navigate", menu=navm)
+        self.config(menu=bar)
+        self.bind_all("<Control-Key-1>", lambda e: self.show_home())
+        self.bind_all("<Control-Key-2>", lambda e: self.show_study())
+        self.bind_all("<Control-Key-3>", lambda e: self.show_create())
+
+        self.bind_all("<Control-o>", lambda e: (self.show_create(), self.browse()))
         self.bind_all("<Control-l>", lambda e: self.show_saved())
         self.bind_all("<Control-k>", lambda e: self.show_cards())
         self.bind_all("<Control-t>", lambda e: self.show_study())
@@ -840,14 +847,14 @@ class App(tk.Tk):
         pad = {"padx": 6, "pady": 4}
 
         # --- file row
-        top = ttk.Frame(self, padding=(10, 10, 10, 0))
+        top = ttk.Frame(self.create_screen, padding=(10, 10, 10, 0))
         top.pack(fill="x")
         ttk.Label(top, text="File:").pack(side="left")
         ttk.Entry(top, textvariable=self.file_var).pack(side="left", fill="x", expand=True, **pad)
         ttk.Button(top, text="Browse...", command=self.browse).pack(side="left")
 
         # --- subtitles row (optional): use a subtitle file's lines instead of AI transcription
-        subs = ttk.Frame(self, padding=(10, 2, 10, 0))
+        subs = ttk.Frame(self.create_screen, padding=(10, 2, 10, 0))
         subs.pack(fill="x")
         ttk.Label(subs, text="Subtitles (optional):").pack(side="left")
         ttk.Entry(subs, textvariable=self.subs_var).pack(side="left", fill="x", expand=True, **pad)
@@ -859,7 +866,7 @@ class App(tk.Tk):
                     increment=0.1, width=6).pack(side="left", padx=(4, 0))
 
         # --- options row
-        opts = ttk.Frame(self, padding=(10, 4, 10, 4))
+        opts = ttk.Frame(self.create_screen, padding=(10, 4, 10, 4))
         opts.pack(fill="x")
         ttk.Label(opts, text="Model:").pack(side="left")
         ttk.Combobox(opts, textvariable=self.model_var, values=tr.MODEL_SIZES,
@@ -881,14 +888,14 @@ class App(tk.Tk):
         self.stop_btn.pack(side="left")
 
         # --- progress
-        prog = ttk.Frame(self, padding=(10, 0, 10, 4))
+        prog = ttk.Frame(self.create_screen, padding=(10, 0, 10, 4))
         prog.pack(fill="x")
         self.progress = ttk.Progressbar(prog, maximum=1000)
         self.progress.pack(fill="x")
         ttk.Label(prog, textvariable=self.status_var, foreground="#444").pack(anchor="w", pady=(4, 0))
 
         # --- main area: [table / full text]  |  [preview]
-        main = ttk.PanedWindow(self, orient="horizontal")
+        main = ttk.PanedWindow(self.create_screen, orient="horizontal")
         main.pack(fill="both", expand=True, padx=10, pady=4)
 
         left = ttk.PanedWindow(main, orient="vertical")
@@ -956,7 +963,7 @@ class App(tk.Tk):
         main.add(self.preview, weight=2)
 
         # --- bottom buttons
-        bottom = ttk.Frame(self, padding=(10, 4, 10, 10))
+        bottom = ttk.Frame(self.create_screen, padding=(10, 4, 10, 10))
         bottom.pack(fill="x")
         self.save_btn = ttk.Button(bottom, text="Save transcript as...", command=self.save_as,
                                    state="disabled")
@@ -1351,17 +1358,90 @@ class App(tk.Tk):
     def show_cards(self):
         self._open_window("cards_window", CardsWindow)
 
+    # ------------------------------------------------------------ screens
+    def _build_home(self):
+        style = ttk.Style(self)
+        style.configure("Big.TButton", font=("Segoe UI", 18, "bold"), padding=(36, 22))
+        box = ttk.Frame(self.home_screen)
+        box.place(relx=0.5, rely=0.45, anchor="center")
+        ttk.Label(box, text="Language Flashcards", font=("Segoe UI", 30, "bold")).pack()
+        ttk.Label(box, text="Learn vocabulary from the videos, shows and songs you watch.",
+                  font=("Segoe UI", 12), foreground="#666").pack(pady=(4, 30))
+        row = ttk.Frame(box)
+        row.pack()
+        for col, (label, cmd, desc) in enumerate((
+            ("Study", self.show_study, "Review your flashcards"),
+            ("Create", self.show_create, "Transcribe a video or song,\nsave lines and make cards"),
+        )):
+            ttk.Button(row, text=label, style="Big.TButton", width=10,
+                       command=cmd).grid(row=0, column=col, padx=24)
+            ttk.Label(row, text=desc, justify="center", foreground="#555",
+                      font=("Segoe UI", 10)).grid(row=1, column=col, pady=(10, 0))
+        ttk.Label(box, textvariable=self.stats_var, foreground="#888",
+                  font=("Segoe UI", 10)).pack(pady=(30, 0))
+
+    def _show_screen(self, name: str):
+        screens = {"home": self.home_screen, "create": self.create_screen, "study": self.study_screen}
+        if name == self.current_screen:
+            return
+        if self.current_screen == "study":
+            self.study_screen.leave()
+        if self.current_screen:
+            screens[self.current_screen].pack_forget()
+        screens[name].pack(fill="both", expand=True)
+        screens[name].focus_set()  # don't leave keyboard focus on a hidden screen's widget
+        self.current_screen = name
+        self.title({"home": "Language Flashcards",
+                    "create": "Language Flashcards – Create",
+                    "study": "Language Flashcards – Study"}[name])
+
+    def _raise_main(self):
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def show_home(self):
+        n_cards, n_lines = len(self.cards.cards), len(self.store.entries)
+        self.stats_var.set(f"{n_cards} card{'s' if n_cards != 1 else ''}  ·  "
+                           f"{n_lines} saved line{'s' if n_lines != 1 else ''}")
+        self._show_screen("home")
+
+    def show_create(self):
+        self._show_screen("create")
+
     def show_study(self):
-        self._open_window("study_window", StudyWindow)
+        stop_wav()
+        self.study_screen.sync()   # pick up cards made since last time
+        self._show_screen("study")
+        self._raise_main()
+        self.study_screen.focus_set()
+
+    def _study_key(self, event):
+        """Space/Enter/R/Esc on the Study screen. (Other screens' widgets handle
+        these keys themselves; this does nothing unless Study is showing.)"""
+        if self.current_screen != "study":
+            return None
+        if event.keysym in ("space", "Return"):
+            self.study_screen.advance()
+        elif event.keysym in ("r", "R"):
+            self.study_screen.replay()
+        elif event.keysym == "Escape":
+            self.show_home()
+        return "break"
 
     def on_saved_changed(self):
         self._mark_saved()
+        if self.current_screen == "home":
+            self.show_home()
 
     def on_cards_changed(self):
         """Keep both list windows in step (card counts / card list)."""
-        for win in (self.saved_window, self.cards_window, self.study_window):
+        for win in (self.saved_window, self.cards_window):
             if win and win.winfo_exists():
                 win.refresh()
+        self.study_screen.sync()
+        if self.current_screen == "home":
+            self.show_home()  # update the counts
 
     # ------------------------------------------------------------- misc
     def _on_close(self):

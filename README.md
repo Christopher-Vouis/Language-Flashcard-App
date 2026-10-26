@@ -11,7 +11,14 @@ timestamped transcript. Built on [faster-whisper](https://github.com/SYSTRAN/fas
 
 ## Use
 
-Double-click **`run.bat`** → **Browse...** → pick a file → **Transcribe**.
+Double-click **`run.bat`**. The app opens at the **main menu**:
+
+- **Study** — review your flashcards (see *Study mode* below).
+- **Create** — transcribe a video or song, save lines and make cards (everything below).
+
+Switch screens any time with **Navigate → Main menu / Study / Create** (Ctrl+1 / Ctrl+2 / Ctrl+3).
+
+On the Create screen: **Browse...** → pick a file → **Transcribe**.
 
 - Lines appear in the table as they're transcribed.
 - With **Audio clips + screenshots** ticked (default), each line then gets an audio clip
@@ -66,11 +73,12 @@ Double-click **`run.bat`** → **Browse...** → pick a file → **Transcribe**.
 
 ### Study mode
 
-- **Cards → Study cards...** (Ctrl+T), or **Study cards** in the Cards window.
+- **Study** on the main menu, **Navigate → Study** (Ctrl+2 or Ctrl+T), or **Study cards** in the Cards window.
 - **Front:** the target word and its sentence (the word highlighted in red). **Flip** (Space / Enter)
   shows the **back**: reading, definition, screenshot, and plays the audio clip automatically
   (**▶ Replay audio** or R to hear it again).
 - **Next card →** (Space / Enter) puts the card at the bottom of the stack and shows the next front.
+  **← Main menu** or Esc goes back.
   Cards added, edited or deleted while studying are picked up straight away.
 
 Command line alternative:
