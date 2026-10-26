@@ -13,7 +13,9 @@ timestamped transcript. Built on [faster-whisper](https://github.com/SYSTRAN/fas
 
 Double-click **`run.bat`**. The app opens at the **main menu**:
 
-- **Study** — review your flashcards (see *Study mode* below).
+- **Deck** — choose which deck to study (or **All cards**); **New deck...**, **Rename...** and **Delete**
+  manage decks. Deleting a deck never deletes its cards — they stay in All cards and their other decks.
+- **Study** — review the cards in the chosen deck (see *Study mode* below).
 - **Create** — transcribe a video or song, save lines and make cards (everything below).
 
 Switch screens any time with **Navigate → Main menu / Study / Create** (Ctrl+1 / Ctrl+2 / Ctrl+3).
@@ -62,13 +64,16 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
 - In **View saved lines**, select a line and click **＋ New card...** (or Enter / Ctrl+N / right-click).
   The card editor shows the screenshot, a **▶ Play** button and the sentence. Highlight a word in the
   sentence and click **Use selection as target word**, or type it, then fill in **Reading** and
-  **Definition** and click **Save card** (Ctrl+Enter). You can make several cards from one line;
+  **Definition**, tick the **Decks** it belongs in (one or more; the deck chosen on the main menu is
+  ticked for you, and **＋ New deck...** makes one on the spot), then click **Save card** (Ctrl+Enter).
+  You can make several cards from one line;
   the **Cards** column in Saved lines shows how many each line has.
 - **Cards → View cards...** (Ctrl+K) lists every card with the same search, screenshot preview and
-  playback as Saved lines, plus the word, reading and definition. **✎ Edit card...** (or Enter)
-  changes the three fields; **Delete selected** removes cards.
-- Cards live in `cards\`: `cards.json` (fields: `target_word`, `reading`, `definition`, `sentence`,
-  `audio_clip`, `screenshot`, source file and times) and their own media copies in `cards\media\`,
+  playback as Saved lines, plus the word, reading and definition. The **Deck** filter shows one deck;
+  the **Decks** column shows where each card is. **✎ Edit card...** (or Enter) changes the three fields
+  and the card's decks; **Delete selected** removes cards.
+- Cards live in `cards\`: `cards.json` (the decks, plus each card's fields: `target_word`, `reading`, `definition`, `sentence`,
+  `audio_clip`, `screenshot`, `decks`, source file and times) and their own media copies in `cards\media\`,
   so deleting a saved line doesn't affect its cards.
 
 ### Study mode

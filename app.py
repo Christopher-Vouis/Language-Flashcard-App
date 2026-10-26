@@ -13,12 +13,12 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import media
 import subtitles
 import transcriber as tr
-from cards import CardStore
+from cards import ALL, CardStore
 from saved import SavedStore
 
 try:
@@ -55,6 +55,20 @@ def play_wav(path: str) -> bool:
 def stop_wav() -> None:
     if winsound is not None:
         winsound.PlaySound(None, 0)
+
+
+def new_deck_dialog(parent, store: CardStore) -> dict | None:
+    """Ask for a name and create a deck. Returns the deck, or None if cancelled."""
+    name = ""
+    while True:
+        name = simpledialog.askstring("New deck", "Name for the new deck:", parent=parent,
+                                      initialvalue=name)
+        if name is None:
+            return None
+        try:
+            return store.add_deck(name)
+        except ValueError as e:
+            messagebox.showwarning("New deck", str(e), parent=parent)
 
 
 def open_folder(path: str) -> None:
@@ -175,14 +189,17 @@ class PreviewPanel(ttk.Frame):
 
 # ------------------------------------------------------- card editor
 class CardEditor(tk.Toplevel):
-    """Modal dialog: fill in target word / reading / definition for a line.
-    After wait_window(), .result is a dict of the three fields, or None."""
+    """Modal dialog: fill in target word / reading / definition for a line and
+    choose its decks. After wait_window(), .result is a dict of the three
+    fields plus "decks" (list of deck ids), or None if cancelled."""
 
     def __init__(self, parent, title: str, sentence: str, meta: str,
-                 audio: str = "", shot: str = "", fields: dict | None = None):
+                 audio: str = "", shot: str = "", fields: dict | None = None,
+                 store: CardStore | None = None, decks: list[str] | None = None,
+                 on_decks_changed=None):
         super().__init__(parent)
         self.title(title)
-        self.geometry("640x780")
+        self.geometry("640x860")
         self.minsize(520, 600)
         self.transient(parent)
         self.result = None
@@ -221,7 +238,15 @@ class CardEditor(tk.Toplevel):
         self.def_text = tk.Text(form, height=4, wrap="word", font=("Segoe UI", 11))
         self.def_text.insert("1.0", fields.get("definition", ""))
         self.def_text.grid(row=2, column=1, sticky="ew", pady=3)
-        ttk.Label(form, text="  ", width=12).grid(row=3, column=0)  # keeps label column width
+        ttk.Label(form, text="Decks:").grid(row=3, column=0, sticky="nw", pady=(8, 3))
+        self.store = store
+        self.on_decks_changed = on_decks_changed
+        self.deck_vars: dict[str, tk.BooleanVar] = {}
+        self.deck_box = ttk.Frame(form)
+        self.deck_box.grid(row=3, column=1, sticky="ew", pady=(8, 3))
+        self._initial_decks = set(decks or [])
+        self._build_deck_checks()
+        ttk.Label(form, text="  ", width=12).grid(row=4, column=0)  # keeps label column width
 
         buttons = ttk.Frame(self, padding=(12, 0, 12, 12))
         buttons.pack(fill="x")
@@ -234,6 +259,28 @@ class CardEditor(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self.cancel)
         self.word_entry.focus_set()
         self.grab_set()
+
+    def _build_deck_checks(self):
+        for w in self.deck_box.winfo_children():
+            w.destroy()
+        if self.store is None:
+            return
+        for i, d in enumerate(self.store.decks):
+            var = self.deck_vars.get(d["id"]) or tk.BooleanVar(value=d["id"] in self._initial_decks)
+            self.deck_vars[d["id"]] = var
+            ttk.Checkbutton(self.deck_box, text=d["name"], variable=var).grid(
+                row=i // 3, column=i % 3, sticky="w", padx=(0, 14), pady=1)
+        n = len(self.store.decks)
+        ttk.Button(self.deck_box, text="＋  New deck...", command=self._new_deck).grid(
+            row=n // 3, column=n % 3, sticky="w", pady=1)
+
+    def _new_deck(self):
+        deck = new_deck_dialog(self, self.store)
+        if deck:
+            self._initial_decks.add(deck["id"])  # tick the deck just created
+            self._build_deck_checks()
+            if self.on_decks_changed:
+                self.on_decks_changed()
 
     def _use_selection(self):
         try:
@@ -251,10 +298,17 @@ class CardEditor(tk.Toplevel):
             messagebox.showwarning("Target word needed", "Please enter the target word.", parent=self)
             self.word_entry.focus_set()
             return
+        decks = [d["id"] for d in self.store.decks if self.deck_vars[d["id"]].get()] \
+            if self.store is not None else []
+        if self.store is not None and not decks:
+            messagebox.showwarning("Choose a deck", "Tick at least one deck for this card "
+                                   "(or click New deck... to make one).", parent=self)
+            return
         self.result = {
             "target_word": word,
             "reading": self.reading_var.get().strip(),
             "definition": self.def_text.get("1.0", "end").strip(),
+            "decks": decks,
         }
         stop_wav()
         self.destroy()
@@ -290,6 +344,7 @@ class RecordWindow(tk.Toplevel):
         ttk.Entry(top, textvariable=self.search_var, width=32).pack(side="left", padx=6)
         self.search_var.trace_add("write", lambda *a: self.refresh())
         ttk.Label(top, textvariable=self.count_var, foreground="#666").pack(side="left", padx=10)
+        self.add_filters(top)
 
         main = ttk.PanedWindow(self, orient="horizontal")
         main.pack(fill="both", expand=True, padx=10, pady=4)
@@ -349,6 +404,9 @@ class RecordWindow(tk.Toplevel):
 
     def add_actions(self, bar: ttk.Frame, menu: tk.Menu) -> None:
         """Add window-specific buttons (left side) and context-menu items."""
+
+    def add_filters(self, top: ttk.Frame) -> None:
+        """Add window-specific filters to the right of the search box."""
 
     # --- shared behaviour
     @staticmethod
@@ -473,19 +531,26 @@ class SavedLinesWindow(RecordWindow):
             return
         stop_wav()
         meta = f"{os.path.basename(e['source_file'])}  ·  {tr.fmt_time(e['start'])}"
+        cards = self.app.cards
+        default = cards.selected_deck if cards.selected_deck != ALL else \
+            (cards.decks[0]["id"] if cards.decks else "")
         dlg = CardEditor(self, "New card", e["text"], meta,
                          audio=self.app.store.abs_path(e.get("audio_clip", "")),
-                         shot=self.app.store.abs_path(e.get("screenshot", "")))
+                         shot=self.app.store.abs_path(e.get("screenshot", "")),
+                         store=cards, decks=[default] if default else [],
+                         on_decks_changed=self.app.on_decks_changed)
         self.wait_window(dlg)
         if dlg.result is None:
             return
         try:
-            self.app.cards.add(e, self.app.store.root, dlg.result)
+            cards.add(e, self.app.store.root, dlg.result, decks=dlg.result["decks"])
         except OSError as err:
             messagebox.showerror("Could not create card", str(err), parent=self)
             return
         self.app.on_cards_changed()  # refreshes this window's Cards column too
-        self.app.status_var.set(f"Card created: {dlg.result['target_word']}.  View it in Cards → View cards (Ctrl+K)")
+        names = ", ".join(cards.deck_name(d) for d in dlg.result["decks"])
+        self.app.status_var.set(f"Card created: {dlg.result['target_word']} (deck: {names}).  "
+                                "View it in Cards → View cards (Ctrl+K)")
 
 
 # ---------------------------------------------------------- cards window
@@ -496,19 +561,44 @@ class CardsWindow(RecordWindow):
         ("word", "Target word", 140, False, "w"),
         ("reading", "Reading", 120, False, "w"),
         ("definition", "Definition", 220, True, "w"),
-        ("sentence", "Sentence", 300, True, "w"),
+        ("sentence", "Sentence", 280, True, "w"),
+        ("decks", "Decks", 130, False, "w"),
         ("media", "Media", 55, False, "center"),
     )
     FOLDER = CARDS_DIR
     WINDOW_ATTR = "cards_window"
 
+    def add_filters(self, top):
+        ttk.Label(top, text="Deck:").pack(side="left", padx=(16, 4))
+        self.deck_filter = ALL
+        self.deck_var = tk.StringVar(value="All cards")
+        self.deck_combo = ttk.Combobox(top, textvariable=self.deck_var, state="readonly", width=22)
+        self.deck_combo.pack(side="left")
+        self.deck_combo.bind("<<ComboboxSelected>>", self._on_deck_filter)
+        self.update_deck_choices()
+
+    def update_deck_choices(self):
+        """Refresh the deck list (after decks are added/renamed/deleted)."""
+        cards = self.app.cards
+        self._deck_ids = [ALL] + [d["id"] for d in cards.decks]
+        self.deck_combo.config(values=[cards.deck_name(i) for i in self._deck_ids])
+        if self.deck_filter not in self._deck_ids:
+            self.deck_filter = ALL
+        self.deck_var.set(cards.deck_name(self.deck_filter))
+
+    def _on_deck_filter(self, _event=None):
+        i = self.deck_combo.current()
+        self.deck_filter = self._deck_ids[i] if 0 <= i < len(self._deck_ids) else ALL
+        self.refresh()
+
     def records(self):
-        return self.app.cards.cards
+        return self.app.cards.cards_in(getattr(self, "deck_filter", ALL))
 
     def row(self, c):
         one_line = lambda s: " ".join(s.split())  # noqa: E731 - definitions may be multi-line
+        decks = ", ".join(self.app.cards.deck_name(d) for d in c.get("decks", []))
         return (c["target_word"], c["reading"], one_line(c["definition"]),
-                c["sentence"], self.media_icons(c))
+                c["sentence"], decks, self.media_icons(c))
 
     def search_text(self, c):
         return " ".join((c["target_word"], c["reading"], c["definition"], c["sentence"]))
@@ -542,11 +632,12 @@ class CardsWindow(RecordWindow):
         dlg = CardEditor(self, "Edit card", c["sentence"], meta,
                          audio=self.app.cards.abs_path(c.get("audio_clip", "")),
                          shot=self.app.cards.abs_path(c.get("screenshot", "")),
-                         fields=c)
+                         fields=c, store=self.app.cards, decks=c.get("decks", []),
+                         on_decks_changed=self.app.on_decks_changed)
         self.wait_window(dlg)
         if dlg.result is None:
             return
-        self.app.cards.update(c["id"], dlg.result)
+        self.app.cards.update(c["id"], dlg.result, decks=dlg.result["decks"])
         self.app.on_cards_changed()  # refreshes this list and an open study window
 
 
@@ -560,7 +651,8 @@ class StudyScreen(ttk.Frame):
     def __init__(self, parent, app: "App"):
         super().__init__(parent)
         self.app = app
-        self.deck: list[str] = [c["id"] for c in app.cards.cards]  # top of stack = deck[0]
+        self.deck_id = app.cards.selected_deck   # which deck is being studied (ALL = every card)
+        self.deck: list[str] = [c["id"] for c in app.cards.cards_in(self.deck_id)]  # top of stack = deck[0]
         self.reviewed = 0
         self.flipped = False
         self._photo = None
@@ -625,10 +717,18 @@ class StudyScreen(ttk.Frame):
 
     # --- deck handling
     def sync(self):
-        """Called when cards are added/edited/deleted elsewhere."""
-        ids = {c["id"] for c in self.app.cards.cards}
+        """Called when cards are added/edited/deleted elsewhere, or the deck
+        chosen on the main menu changes."""
+        cards = self.app.cards
+        if self.deck_id != cards.selected_deck:  # different deck: start it fresh
+            self.deck_id = cards.selected_deck
+            self.deck = []
+            self.reviewed = 0
+            self.flipped = False
+        in_deck = cards.cards_in(self.deck_id)
+        ids = {c["id"] for c in in_deck}
         self.deck = [i for i in self.deck if i in ids]
-        self.deck += [c["id"] for c in self.app.cards.cards if c["id"] not in self.deck]
+        self.deck += [c["id"] for c in in_deck if c["id"] not in self.deck]
         current = self.current()
         if current is None or not self.flipped:
             self.show_front()
@@ -657,7 +757,8 @@ class StudyScreen(ttk.Frame):
     # --- display
     def _update_progress(self):
         n = len(self.deck)
-        self.progress_var.set(f"{n} card{'s' if n != 1 else ''} in deck  ·  "
+        self.progress_var.set(f"Deck: {self.app.cards.deck_name(self.deck_id)}  ·  "
+                              f"{n} card{'s' if n != 1 else ''}  ·  "
                               f"{self.reviewed} reviewed this session")
 
     def show_front(self):
@@ -667,8 +768,13 @@ class StudyScreen(ttk.Frame):
         c = self.current()
         self._update_progress()
         if c is None:
-            self.word_var.set("No cards yet")
-            self._set_sentence("Create cards from Saved lines → New card, then come back here.", "")
+            if self.app.cards.cards and self.deck_id != ALL:
+                self.word_var.set("This deck is empty")
+                self._set_sentence("Choose another deck on the main menu, or add cards to this one "
+                                   "(Saved lines → New card, or Edit card in the Cards window).", "")
+            else:
+                self.word_var.set("No cards yet")
+                self._set_sentence("Create cards from Saved lines → New card, then come back here.", "")
             self.action_btn.config(text="Flip", state="disabled")
             return
         self.word_var.set(c["target_word"])
@@ -1366,11 +1472,25 @@ class App(tk.Tk):
         box.place(relx=0.5, rely=0.45, anchor="center")
         ttk.Label(box, text="Language Flashcards", font=("Segoe UI", 30, "bold")).pack()
         ttk.Label(box, text="Learn vocabulary from the videos, shows and songs you watch.",
-                  font=("Segoe UI", 12), foreground="#666").pack(pady=(4, 30))
+                  font=("Segoe UI", 12), foreground="#666").pack(pady=(4, 24))
+
+        # deck chooser: which deck Study uses (and the default deck for new cards)
+        decks = ttk.Frame(box)
+        decks.pack(pady=(0, 24))
+        ttk.Label(decks, text="Deck:", font=("Segoe UI", 12)).pack(side="left")
+        self.home_deck_var = tk.StringVar()
+        self.home_deck_combo = ttk.Combobox(decks, textvariable=self.home_deck_var, state="readonly",
+                                            width=24, font=("Segoe UI", 12))
+        self.home_deck_combo.pack(side="left", padx=8)
+        self.home_deck_combo.bind("<<ComboboxSelected>>", self._on_home_deck)
+        ttk.Button(decks, text="New deck...", command=self.new_deck).pack(side="left", padx=(4, 0))
+        ttk.Button(decks, text="Rename...", command=self.rename_deck).pack(side="left", padx=4)
+        ttk.Button(decks, text="Delete", command=self.delete_deck).pack(side="left")
+
         row = ttk.Frame(box)
         row.pack()
         for col, (label, cmd, desc) in enumerate((
-            ("Study", self.show_study, "Review your flashcards"),
+            ("Study", self.show_study, "Review the cards\nin the chosen deck"),
             ("Create", self.show_create, "Transcribe a video or song,\nsave lines and make cards"),
         )):
             ttk.Button(row, text=label, style="Big.TButton", width=10,
@@ -1401,10 +1521,75 @@ class App(tk.Tk):
         self.focus_force()
 
     def show_home(self):
-        n_cards, n_lines = len(self.cards.cards), len(self.store.entries)
-        self.stats_var.set(f"{n_cards} card{'s' if n_cards != 1 else ''}  ·  "
-                           f"{n_lines} saved line{'s' if n_lines != 1 else ''}")
+        self._update_home()
         self._show_screen("home")
+
+    # ------------------------------------------------------------- decks
+    def _update_home(self):
+        """Refresh the main menu's deck list and counts."""
+        cards = self.cards
+        self._home_deck_ids = [ALL] + [d["id"] for d in cards.decks]
+        self.home_deck_combo.config(values=[
+            f"{cards.deck_name(i)}  ({len(cards.cards_in(i))})" for i in self._home_deck_ids])
+        current = cards.selected_deck if cards.selected_deck in self._home_deck_ids else ALL
+        self.home_deck_combo.current(self._home_deck_ids.index(current))
+        n_cards, n_lines = len(cards.cards), len(self.store.entries)
+        n_decks = len(cards.decks)
+        self.stats_var.set(f"{n_decks} deck{'s' if n_decks != 1 else ''}  ·  "
+                           f"{n_cards} card{'s' if n_cards != 1 else ''}  ·  "
+                           f"{n_lines} saved line{'s' if n_lines != 1 else ''}")
+
+    def _on_home_deck(self, _event=None):
+        i = self.home_deck_combo.current()
+        if 0 <= i < len(self._home_deck_ids):
+            self.cards.select_deck(self._home_deck_ids[i])
+        self.on_decks_changed()
+
+    def new_deck(self):
+        deck = new_deck_dialog(self, self.cards)
+        if deck:
+            self.cards.select_deck(deck["id"])
+            self.on_decks_changed()
+
+    def rename_deck(self):
+        deck = self.cards.deck(self.cards.selected_deck)
+        if not deck:
+            messagebox.showinfo("Rename deck", "Choose a deck to rename (not All cards).", parent=self)
+            return
+        name = deck["name"]
+        while True:
+            name = simpledialog.askstring("Rename deck", "New name:", parent=self, initialvalue=name)
+            if name is None:
+                return
+            try:
+                self.cards.rename_deck(deck["id"], name)
+                break
+            except ValueError as e:
+                messagebox.showwarning("Rename deck", str(e), parent=self)
+        self.on_decks_changed()
+
+    def delete_deck(self):
+        deck = self.cards.deck(self.cards.selected_deck)
+        if not deck:
+            messagebox.showinfo("Delete deck", "Choose a deck to delete (not All cards).", parent=self)
+            return
+        n = len(self.cards.cards_in(deck["id"]))
+        if not messagebox.askyesno(
+                "Delete deck",
+                f'Delete the deck "{deck["name"]}"?\n\nIts {n} card{"s" if n != 1 else ""} '
+                "will NOT be deleted: they stay in All cards and in any other decks they belong to.",
+                parent=self):
+            return
+        self.cards.delete_deck(deck["id"])
+        self.on_decks_changed()
+
+    def on_decks_changed(self):
+        """Decks were added/renamed/deleted or a different deck was chosen."""
+        self._update_home()
+        if self.cards_window and self.cards_window.winfo_exists():
+            self.cards_window.update_deck_choices()
+            self.cards_window.refresh()
+        self.study_screen.sync()
 
     def show_create(self):
         self._show_screen("create")
@@ -1431,8 +1616,7 @@ class App(tk.Tk):
 
     def on_saved_changed(self):
         self._mark_saved()
-        if self.current_screen == "home":
-            self.show_home()
+        self._update_home()
 
     def on_cards_changed(self):
         """Keep both list windows in step (card counts / card list)."""
@@ -1440,8 +1624,7 @@ class App(tk.Tk):
             if win and win.winfo_exists():
                 win.refresh()
         self.study_screen.sync()
-        if self.current_screen == "home":
-            self.show_home()  # update the counts
+        self._update_home()  # deck counts
 
     # ------------------------------------------------------------- misc
     def _on_close(self):
