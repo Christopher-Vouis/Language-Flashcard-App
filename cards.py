@@ -113,6 +113,20 @@ class CardStore:
             self.selected_deck = ALL
         self._write()
 
+    def add_to_deck(self, card_ids, deck_id: str) -> int:
+        """Add cards to a deck (keeping their other decks). Returns how many
+        weren't already in it."""
+        if not self.deck(deck_id):
+            return 0
+        added = 0
+        for c in self.cards:
+            if c["id"] in card_ids and deck_id not in c.setdefault("decks", []):
+                c["decks"].append(deck_id)
+                added += 1
+        if added:
+            self._write()
+        return added
+
     def select_deck(self, deck_id: str) -> None:
         if deck_id != self.selected_deck:
             self.selected_deck = deck_id

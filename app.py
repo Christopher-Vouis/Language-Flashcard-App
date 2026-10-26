@@ -618,9 +618,54 @@ class CardsWindow(RecordWindow):
     def add_actions(self, bar, menu):
         ttk.Button(bar, text="Study cards", command=self.app.show_study).pack(side="left", padx=(0, 6))
         ttk.Button(bar, text="✎  Edit card...", command=self.edit_card).pack(side="left")
+        self.deck_menu = tk.Menu(self, tearoff=False, postcommand=self._fill_deck_menu)
+        self.add_deck_btn = ttk.Button(bar, text="Add to deck  ▾", command=self._popup_deck_menu)
+        self.add_deck_btn.pack(side="left", padx=(6, 0))
         menu.add_command(label="✎  Edit card...", command=self.edit_card)
+        menu.add_cascade(label="Add to deck", menu=self.deck_menu)
         self.tree.bind("<Return>", lambda e: self.edit_card())
         self.bind("<Control-e>", lambda e: self.edit_card())
+
+    # --- "Add to deck" menu
+    def _popup_deck_menu(self):
+        if not self.tree.selection():
+            messagebox.showinfo("No card selected", "Select one or more cards first.", parent=self)
+            return
+        b = self.add_deck_btn
+        self.deck_menu.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+
+    def _fill_deck_menu(self):
+        """Rebuilt each time it opens: one entry per deck. Decks every selected
+        card is already in are shown ticked and disabled."""
+        m = self.deck_menu
+        m.delete(0, "end")
+        ids = set(self.tree.selection())
+        selected = [c for c in self.app.cards.cards if c["id"] in ids]
+        for d in self.app.cards.decks:
+            done = bool(selected) and all(d["id"] in c.get("decks", []) for c in selected)
+            m.add_command(label=("✓  " if done else "     ") + d["name"],
+                          state="disabled" if done or not selected else "normal",
+                          command=lambda deck_id=d["id"]: self.add_to_deck(deck_id))
+        m.add_separator()
+        m.add_command(label="＋  New deck...", state="normal" if selected else "disabled",
+                      command=self._add_to_new_deck)
+
+    def add_to_deck(self, deck_id: str):
+        ids = list(self.tree.selection())
+        if not ids:
+            return
+        added = self.app.cards.add_to_deck(ids, deck_id)
+        name = self.app.cards.deck_name(deck_id)
+        self.app.on_cards_changed()   # Decks column, study screen, main-menu counts
+        skipped = len(ids) - added
+        self.count_var.set(f"Added {added} card{'s' if added != 1 else ''} to {name}"
+                           + (f" ({skipped} already there)" if skipped else ""))
+
+    def _add_to_new_deck(self):
+        deck = new_deck_dialog(self, self.app.cards)
+        if deck:
+            self.app.on_decks_changed()
+            self.add_to_deck(deck["id"])
 
     def edit_card(self):
         c = self.focused()

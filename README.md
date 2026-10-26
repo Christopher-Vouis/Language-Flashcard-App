@@ -71,7 +71,9 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
 - **Cards → View cards...** (Ctrl+K) lists every card with the same search, screenshot preview and
   playback as Saved lines, plus the word, reading and definition. The **Deck** filter shows one deck;
   the **Decks** column shows where each card is. **✎ Edit card...** (or Enter) changes the three fields
-  and the card's decks; **Delete selected** removes cards.
+  and the card's decks. **Add to deck ▾** (also on right-click) adds the selected card(s) to a deck,
+  keeping their other decks; decks they're already in are shown ✓, and **＋ New deck...** makes one.
+  **Delete selected** removes cards.
 - Cards live in `cards\`: `cards.json` (the decks, plus each card's fields: `target_word`, `reading`, `definition`, `sentence`,
   `audio_clip`, `screenshot`, `decks`, source file and times) and their own media copies in `cards\media\`,
   so deleting a saved line doesn't affect its cards.
