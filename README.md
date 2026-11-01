@@ -82,8 +82,8 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
   the **Cards** column in Saved lines shows how many each line has.
 - **Cards → View cards...** (Ctrl+K) lists every card with the same search, screenshot preview and
   playback as Saved lines, plus the word, reading and definition. The **Deck** filter shows one deck;
-  the **Decks** column shows where each card is. **✎ Edit card...** (or Enter) changes the three fields
-  and the card's decks. **Add to deck ▾** (also on right-click) adds the selected card(s) to a deck,
+  the **Decks** column shows where each card is. **✎ Edit card...** (or Enter) changes the three fields,
+  the card's decks and its images. **Add to deck ▾** (also on right-click) adds the selected card(s) to a deck,
   keeping their other decks; decks they're already in are shown ✓, and **＋ New deck...** makes one.
   **Delete selected** removes cards.
 - Cards live in `cards\`: `cards.json` (the decks, plus each card's fields: `target_word`, `reading`, `definition`, `sentence`,
@@ -107,7 +107,10 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
 - **Blocks** (left): Target word, Reading, Definition, Sentence, Audio button, Source (file & time),
   Divider line and Custom text — and the **▾ Images** section (click its title to fold it):
   a block for each image, **＋ Add image...**, and a **Slideshow** block when the card has more than one
-  image (one image at a time with ◀ ▶ and a counter; optional auto-advance every 3/5/10 s).
+  image (one image at a time with ◀ ▶ and a counter). Select a slideshow to set **Autoplay**:
+  *Change image every [n] seconds* (any value from 0.5 to 120; type it or use the arrows) and
+  *Loop back to the first image* (off = stop on the last one). While it autoplays, a ⏸ / ⏵ button
+  pauses and resumes it. Autoplay runs in study mode and the Test preview (not while editing).
   In the default layout, *Image 1* means each card's first image (its screenshot), *Image 2* its
   second, and so on; in one card's own layout, image blocks are that card's specific pictures.
 - **Drag** blocks from the block list onto the **preview** or the **Front / Back** lists, and drag
@@ -132,9 +135,12 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
   window's **Layout** column shows *custom*, and study mode notes "This card has its own layout".
   **Use the default layout for this card** (top right of the editor) removes it again.
   **Edit layout ▾ → All cards (default layout)...** or **Cards → Card layout** edits the default.
-- **Images on a card.** **＋ Add image...** copies pictures (PNG, JPG, GIF, WebP, BMP) into the card;
-  the **✕** on an image in the Images section removes it from the card (the file is deleted).
-  The card's original screenshot is Image 1. The Cards window's Media column shows ▣×3 etc.
+- **Images on a card.** **＋ Add image...** copies pictures (PNG, JPG, GIF, WebP, BMP) into the card.
+  To **delete** one: **✎ Edit card...** in the Cards window shows the card's images as thumbnails, each with
+  **✕ Delete** (and **＋ Add image...**); or in the layout editor click the **✕** on an image in the Images
+  section, or select an image block and click **✕ Delete this picture from the card**. You're asked first;
+  the picture file is deleted. The card's original screenshot is Image 1 (it can be deleted too).
+  The Cards window's Media column shows ▣×3 etc.
 - **Play audio automatically** can be switched on for either side (e.g. a listening card: audio on the front).
 - **↶ Undo** (Ctrl+Z) undoes any step; **Reset to default layout** brings back the original look;
   **Save** (Ctrl+S) applies it to study mode straight away. Closing with unsaved changes asks first.

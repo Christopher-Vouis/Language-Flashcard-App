@@ -291,45 +291,72 @@ class CardView(tk.Frame):
                                     "Slideshow (this card has no images)" if not images else "")
         if not images:
             return f
-        state = {"i": 0, "job": None}
+        # autoplay: move to the next image every `interval` seconds (study / test only)
+        interval = float(block.get("interval", 4) or 4)
+        loop = bool(block.get("loop", True))
+        can_autoplay = bool(block.get("autoplay")) and len(images) > 1
+        state = {"i": 0, "job": None, "playing": can_autoplay and not self.editing}
         counter = tk.StringVar()
+        pause_btn = None
 
         def show(i):
             state["i"] = i % len(images)
             set_path(abs_path(images[state["i"]]["path"]))
             counter.set(f"{state['i'] + 1} / {len(images)}")
 
-        if len(images) > 1:
-            bar = tk.Frame(f, background=theme.BG)
-            bar.pack(pady=(self._px(4), 0))
-            ttk.Button(bar, text="◀", width=3, takefocus=False,
-                       command=lambda: (show(state["i"] - 1), restart())).pack(side="left")
-            tk.Label(bar, textvariable=counter, background=theme.BG, foreground=theme.MUTED,
-                     font=("Segoe UI", self._px(10)), width=7).pack(side="left")
-            ttk.Button(bar, text="▶", width=3, takefocus=False,
-                       command=lambda: (show(state["i"] + 1), restart())).pack(side="left")
-
-        interval = int(block.get("interval", 0) or 0)
-
-        def tick():
-            show(state["i"] + 1)
-            state["job"] = f.after(interval * 1000, tick)
-
-        def restart():
-            if state["job"]:
-                f.after_cancel(state["job"])
-                state["job"] = None
-            if interval and len(images) > 1 and not self.editing:
-                state["job"] = f.after(interval * 1000, tick)
-
-        def stop(_e=None):
+        def cancel():
             if state["job"]:
                 try:
                     f.after_cancel(state["job"])
                 except tk.TclError:
                     pass
                 state["job"] = None
-        f.bind("<Destroy>", stop, add="+")
+
+        def schedule():
+            cancel()
+            if state["playing"]:
+                state["job"] = f.after(max(int(interval * 1000), 500), tick)
+
+        def tick():
+            state["job"] = None
+            if not loop and state["i"] == len(images) - 1:
+                set_playing(False)          # reached the last image: stop there
+                return
+            show(state["i"] + 1)
+            schedule()
+
+        def set_playing(on: bool):
+            state["playing"] = on
+            if pause_btn is not None:
+                pause_btn.configure(text="⏸" if on else "⏵")
+            schedule()
+
+        def toggle():
+            if not state["playing"] and not loop and state["i"] == len(images) - 1:
+                show(0)                     # finished: play again from the start
+            set_playing(not state["playing"])
+
+        def step(delta):
+            show(state["i"] + delta)
+            schedule()                      # a manual step restarts the timer
+
+        if len(images) > 1:
+            bar = tk.Frame(f, background=theme.BG)
+            bar.pack(pady=(self._px(4), 0))
+            ttk.Button(bar, text="◀", width=3, takefocus=False, command=lambda: step(-1)).pack(side="left")
+            tk.Label(bar, textvariable=counter, background=theme.BG, foreground=theme.MUTED,
+                     font=("Segoe UI", self._px(10)), width=7).pack(side="left")
+            ttk.Button(bar, text="▶", width=3, takefocus=False, command=lambda: step(1)).pack(side="left")
+            if can_autoplay:
+                pause_btn = ttk.Button(bar, text="⏸" if state["playing"] else "⏵", width=3,
+                                       takefocus=False, command=toggle)
+                pause_btn.pack(side="left", padx=(self._px(8), 0))
+                if self.editing:
+                    tk.Label(bar, text=f"autoplay every {interval:g} s" + ("" if loop else ", once"),
+                             background=theme.BG, foreground=theme.SUBTLE,
+                             font=("Segoe UI", self._px(9))).pack(side="left", padx=(self._px(6), 0))
+
+        f.bind("<Destroy>", lambda e: cancel(), add="+")
         show(0)
-        restart()
+        schedule()
         return f

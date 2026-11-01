@@ -260,7 +260,8 @@ class TemplateEditor(tk.Toplevel):
             hint = "In the default layout, Image 1 = each card's first image, and so on."
             for n in range(1, max(len(images), 1) + 1):
                 name = f"  ·  {images[n - 1]['name']}" if n <= len(images) else ""
-                self._palette_chip(box, "image", {"image": f"#{n}"}, title=f"Image {n}{name}")
+                self._palette_chip(box, "image", {"image": f"#{n}"}, title=f"Image {n}{name}",
+                                   removable_image=images[n - 1]["id"] if n <= len(images) else "")
         else:
             hint = "Blocks for this card's own images."
             for n, img in enumerate(images, 1):
@@ -304,7 +305,8 @@ class TemplateEditor(tk.Toplevel):
         img = next((i for i in self._images() if i["id"] == image_id), None)
         if card is None or img is None:
             return
-        if not messagebox.askyesno("Remove image", f"Remove the image “{img['name']}” from this card?\n\n"
+        if not messagebox.askyesno("Delete image",
+                                   f"Delete the picture “{img['name']}” from the card “{card['target_word']}”?\n\n"
                                    "The picture file is deleted. (Undo can't bring it back.)", parent=self):
             return
         self.cards.remove_image(card["id"], image_id)
@@ -772,17 +774,74 @@ class TemplateEditor(tk.Toplevel):
             which.bind("<<ComboboxSelected>>",
                        lambda e: self.set_prop("image", options[which.current()][0]) or self._refresh_lists())
             row += 1
+            shown = T.resolve_image(block, images)[1]
+            if shown and self._preview_card():
+                ttk.Button(grid, text=f"✕  Delete this picture from the card  ({shown['name']})",
+                           command=lambda iid=shown["id"]: self.remove_image(iid)
+                           ).grid(row=row, column=1, sticky="w", pady=(6, 3))
+                row += 1
         elif block["type"] == "slideshow":
             segmented("Size", "size", T.IMAGE_SIZES)
-            ttk.Label(grid, text="Auto-advance", foreground=theme.MUTED).grid(row=row, column=0, sticky="w", pady=3, padx=(0, 12))
-            iv = tk.StringVar(value=str(block.get("interval", 0)))
+            ttk.Label(grid, text="Autoplay", foreground=theme.MUTED).grid(row=row, column=0, sticky="w", pady=3, padx=(0, 12))
             f = ttk.Frame(grid)
             f.grid(row=row, column=1, sticky="w", pady=3)
-            for value, text in T.INTERVALS:
-                ttk.Radiobutton(f, text=text, value=str(value), variable=iv, style="Seg.Toolbutton",
-                                command=lambda: self.set_prop("interval", int(iv.get()))).pack(side="left")
+            auto = tk.BooleanVar(value=block.get("autoplay", False))
+            secs = tk.StringVar(value=f"{float(block.get('interval', 4)):g}")
+            loop = tk.BooleanVar(value=block.get("loop", True))
+            spin = ttk.Spinbox(f, textvariable=secs, from_=T.MIN_INTERVAL, to=T.MAX_INTERVAL,
+                               increment=0.5, width=6, justify="center")
+
+            def parse():
+                try:
+                    return min(max(float(secs.get().replace(",", ".")), T.MIN_INTERVAL), T.MAX_INTERVAL)
+                except ValueError:
+                    return None
+
+            def apply_secs(_e=None):
+                """Enter / leaving the box / arrows: apply and show the cleaned-up value."""
+                v = parse()
+                if v is None:
+                    v = float(block.get("interval", 4))
+                if secs.get() != f"{v:g}":
+                    secs.set(f"{v:g}")
+                self.set_prop("interval", v)
+
+            pending = {"job": None}
+
+            def typed(*_):
+                """While typing: apply a valid number shortly after the last keystroke."""
+                if pending["job"]:
+                    spin.after_cancel(pending["job"])
+
+                def later():
+                    pending["job"] = None
+                    v = parse()
+                    if v is not None and spin.winfo_exists():
+                        self.set_prop("interval", v)
+                pending["job"] = spin.after(450, later)
+
+            def apply_auto():
+                self.set_prop("autoplay", auto.get())
+                state = "normal" if auto.get() else "disabled"
+                spin.configure(state=state)
+                loop_box.configure(state=state)
+            ttk.Checkbutton(f, text="Change image every", variable=auto, command=apply_auto).pack(side="left")
+            spin.pack(side="left", padx=6)
+            ttk.Label(f, text="seconds").pack(side="left")
+            loop_box = ttk.Checkbutton(f, text="Loop back to the first image", variable=loop,
+                                       command=lambda: self.set_prop("loop", loop.get()))
+            loop_box.pack(side="left", padx=(16, 0))
+            for ev in ("<<Increment>>", "<<Decrement>>"):
+                spin.bind(ev, lambda e: spin.after_idle(apply_secs), add="+")
+            spin.bind("<Return>", apply_secs)
+            spin.bind("<FocusOut>", apply_secs)
+            secs.trace_add("write", typed)
+            if not auto.get():
+                spin.configure(state="disabled")
+                loop_box.configure(state="disabled")
             row += 1
-            ttk.Label(grid, text="Shows all of the card's images, one at a time, with ◀ ▶ buttons.",
+            ttk.Label(grid, text="Shows all of the card's images, one at a time, with ◀ ▶ (and ⏸ while autoplaying). "
+                                 "Autoplay runs in study mode and the Test preview.",
                       foreground=theme.SUBTLE).grid(row=row, column=1, sticky="w")
         elif info["text"]:
             segmented("Size", "size", T.TEXT_SIZES)

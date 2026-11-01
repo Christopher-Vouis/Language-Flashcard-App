@@ -226,11 +226,11 @@ class CardEditor(tk.Toplevel):
     def __init__(self, parent, title: str, sentence: str, meta: str,
                  audio: str = "", shot: str = "", fields: dict | None = None,
                  store: CardStore | None = None, decks: list[str] | None = None,
-                 on_decks_changed=None):
+                 on_decks_changed=None, card_id: str = "", on_images_changed=None):
         super().__init__(parent)
         self.title(title)
         theme.dark_title_bar(self)
-        self.geometry("640x860")
+        self.geometry("700x960" if card_id else "640x860")
         self.minsize(520, 600)
         self.transient(parent)
         self.result = None
@@ -239,7 +239,7 @@ class CardEditor(tk.Toplevel):
         body = ttk.Frame(self, padding=12)
         body.pack(fill="both", expand=True)
 
-        self.preview = PreviewPanel(body, image_height=240)
+        self.preview = PreviewPanel(body, image_height=170 if card_id else 240)
         self.preview.pack(fill="both", expand=True)
         self.preview.show("", meta, audio=audio, shot=shot)
         self.preview.text_label.pack_forget()  # the sentence is shown below, selectable
@@ -277,7 +277,17 @@ class CardEditor(tk.Toplevel):
         self.deck_box.grid(row=3, column=1, sticky="ew", pady=(8, 3))
         self._initial_decks = set(decks or [])
         self._build_deck_checks()
-        ttk.Label(form, text="  ", width=12).grid(row=4, column=0)  # keeps label column width
+        # images (existing cards only): thumbnails with Delete, and Add image
+        self.card_id = card_id
+        self.on_images_changed = on_images_changed
+        self._meta, self._audio = meta, audio
+        self._thumbs: list = []
+        if store is not None and card_id:
+            ttk.Label(form, text="Images:").grid(row=4, column=0, sticky="nw", pady=(8, 3))
+            self.images_box = ttk.Frame(form)
+            self.images_box.grid(row=4, column=1, sticky="ew", pady=(8, 3))
+            self._build_images()
+        ttk.Label(form, text="  ", width=12).grid(row=5, column=0)  # keeps label column width
 
         buttons = ttk.Frame(self, padding=(12, 0, 12, 12))
         buttons.pack(fill="x")
@@ -304,6 +314,75 @@ class CardEditor(tk.Toplevel):
         n = len(self.store.decks)
         ttk.Button(self.deck_box, text="＋  New deck...", command=self._new_deck).grid(
             row=n // 3, column=n % 3, sticky="w", pady=1)
+
+    def _build_images(self):
+        for w in self.images_box.winfo_children():
+            w.destroy()
+        self._thumbs.clear()
+        card = self.store.get(self.card_id)
+        images = card_images(card) if card else []
+        strip = ttk.Frame(self.images_box)
+        strip.pack(anchor="w")
+        for n, img in enumerate(images, 1):
+            cell = tk.Frame(strip, background=theme.SURFACE, highlightthickness=1,
+                            highlightbackground=theme.BORDER)
+            cell.pack(side="left", padx=(0, 8))
+            pic = tk.Label(cell, background=theme.IMAGE_BG, width=12, height=4, text="▣",
+                           foreground=theme.MUTED)
+            path = self.store.abs_path(img["path"])
+            if Image is not None and os.path.isfile(path):
+                try:
+                    with Image.open(path) as im:
+                        im.seek(0)
+                        thumb = im.convert("RGB")
+                    thumb.thumbnail((110, 66))
+                    photo = ImageTk.PhotoImage(thumb)
+                    self._thumbs.append(photo)
+                    pic.configure(image=photo, width=110, height=66, text="")
+                except OSError:
+                    pass
+            pic.pack(padx=4, pady=(4, 2))
+            tk.Label(cell, text=f"{n}. {img['name']}"[:18], background=theme.SURFACE,
+                     foreground=theme.FG, font=("Segoe UI", 9)).pack()
+            ttk.Button(cell, text="✕  Delete", command=lambda iid=img["id"], nm=img["name"]:
+                       self._delete_image(iid, nm)).pack(pady=(2, 4))
+        if not images:
+            ttk.Label(strip, text="No images.", foreground=theme.SUBTLE).pack(side="left", padx=(0, 10))
+        row = ttk.Frame(self.images_box)
+        row.pack(anchor="w", pady=(6, 0))
+        ttk.Button(row, text="＋  Add image...", command=self._add_images).pack(side="left")
+        ttk.Label(row, text="Image changes are saved straight away.", foreground=theme.SUBTLE).pack(side="left", padx=10)
+
+    def _images_changed(self):
+        card = self.store.get(self.card_id)
+        images = card_images(card) if card else []
+        self.preview.show("", self._meta, audio=self._audio,
+                          shot=self.store.abs_path(images[0]["path"]) if images else "")
+        self.preview.text_label.pack_forget()
+        self._build_images()
+        if self.on_images_changed:
+            self.on_images_changed()
+
+    def _delete_image(self, image_id: str, name: str):
+        if not messagebox.askyesno("Delete image", f"Delete the picture “{name}” from this card?\n\n"
+                                   "The picture file is deleted.", parent=self):
+            return
+        self.store.remove_image(self.card_id, image_id)
+        self._images_changed()
+
+    def _add_images(self):
+        paths = filedialog.askopenfilenames(
+            parent=self, title="Add images to this card",
+            filetypes=[("Pictures", "*.jpg *.jpeg *.png *.gif *.webp *.bmp"), ("All files", "*.*")])
+        added = False
+        for p in paths:
+            try:
+                self.store.add_image(self.card_id, p)
+                added = True
+            except (ValueError, OSError) as err:
+                messagebox.showwarning("Add image", str(err), parent=self)
+        if added:
+            self._images_changed()
 
     def _new_deck(self):
         deck = new_deck_dialog(self, self.store)
@@ -726,8 +805,9 @@ class CardsWindow(RecordWindow):
         meta = f"{os.path.basename(c.get('source_file', ''))}  ·  {tr.fmt_time(c.get('start', 0))}"
         dlg = CardEditor(self, "Edit card", c["sentence"], meta,
                          audio=self.app.cards.abs_path(c.get("audio_clip", "")),
-                         shot=self.app.cards.abs_path(c.get("screenshot", "")),
+                         shot=self.app.cards.abs_path(card_images(c)[0]["path"]) if card_images(c) else "",
                          fields=c, store=self.app.cards, decks=c.get("decks", []),
+                         card_id=c["id"], on_images_changed=self.app.on_cards_changed,
                          on_decks_changed=self.app.on_decks_changed)
         self.wait_window(dlg)
         if dlg.result is None:

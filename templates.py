@@ -42,7 +42,7 @@ BLOCK_TYPES: dict[str, dict] = {
     "image":      {"label": "Image", "icon": "▣", "text": False, "palette": False,
                    "defaults": {"size": "fill", "image": ""}},
     "slideshow":  {"label": "Slideshow", "icon": "⧉", "text": False, "palette": False,
-                   "defaults": {"size": "fill", "interval": 0}},
+                   "defaults": {"size": "fill", "autoplay": False, "interval": 4.0, "loop": True}},
     "audio":      {"label": "Audio button", "icon": "▶", "text": False, "defaults": {}},
     "source":     {"label": "Source (file & time)", "icon": "⏱", "text": True,
                    "defaults": {"size": "s", "align": "center", "color": "subtle", "bold": False}},
@@ -57,7 +57,7 @@ TEXT_SIZES = [("s", "S"), ("m", "M"), ("l", "L"), ("xl", "XL"), ("xxl", "XXL")]
 FONT_PX = {"s": 11, "m": 14, "l": 18, "xl": 26, "xxl": 34}
 IMAGE_SIZES = [("s", "Small"), ("m", "Medium"), ("l", "Large"), ("fill", "Fill space")]
 IMAGE_PX = {"s": 180, "m": 260, "l": 360}
-INTERVALS = [(0, "Off"), (3, "3 s"), (5, "5 s"), (10, "10 s")]   # slideshow auto-advance
+MIN_INTERVAL, MAX_INTERVAL = 0.5, 120.0   # slideshow autoplay: seconds per image
 ALIGNS = [("left", "Left"), ("center", "Centre"), ("right", "Right")]
 COLORS = [("text", "Normal"), ("muted", "Soft"), ("subtle", "Faint"),
           ("accent", "Blue"), ("target", "Red")]
@@ -119,6 +119,17 @@ def _clean_block(b) -> dict | None:
         return None
     nb = new_block(b["type"])
     nb.update({k: v for k, v in b.items() if k in nb or k == "id"})
+    if nb["type"] == "slideshow":
+        # older files: "interval" 0 = off, 3/5/10 = autoplay every n seconds
+        if "autoplay" not in b:
+            nb["autoplay"] = bool(b.get("interval"))
+            if not b.get("interval"):
+                nb["interval"] = 4.0
+        try:
+            nb["interval"] = min(max(float(nb["interval"]), MIN_INTERVAL), MAX_INTERVAL)
+        except (TypeError, ValueError):
+            nb["interval"] = 4.0
+        nb["autoplay"], nb["loop"] = bool(nb["autoplay"]), bool(nb["loop"])
     return nb
 
 
