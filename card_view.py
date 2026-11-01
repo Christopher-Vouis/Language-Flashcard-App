@@ -22,6 +22,7 @@ from tkinter import ttk
 import templates as T
 import theme
 from audio import play_wav
+from cards import card_images
 
 try:
     from PIL import Image, ImageTk
@@ -76,8 +77,9 @@ class CardView(tk.Frame):
         self.rows = []
         card = card or {}
         self._audio = abs_path(card.get("audio_clip", "")) if card else ""
+        self._card_images = card_images(card) if card else []
         for row in side.get("rows", []):
-            grows = any(b["type"] == "image" and b.get("size") == "fill" for b in row)
+            grows = any(b["type"] in ("image", "slideshow") and b.get("size") == "fill" for b in row)
             rf = tk.Frame(self, background=theme.BG)
             rf.pack(fill="both" if grows else "x", expand=grows, pady=self._px(3))
             items = []
@@ -153,6 +155,8 @@ class CardView(tk.Frame):
         kind = block["type"]
         if kind == "image":
             f = self._draw_image(row, block, card, abs_path, selected)
+        elif kind == "slideshow":
+            f = self._draw_slideshow(row, block, abs_path, selected)
         elif kind == "sentence":
             f = self._draw_sentence(row, block, card, selected)
         elif kind == "divider":
@@ -226,36 +230,106 @@ class CardView(tk.Frame):
         box.bind("<Configure>", lambda e: box.after_idle(fit_height), add="+")
         return f
 
-    def _draw_image(self, row, block: dict, card: dict, abs_path, selected: bool):
-        path = abs_path(card.get("screenshot", "")) if card else ""
-        has = bool(path) and os.path.isfile(path) and Image is not None
-        if not has and not self.editing:
-            return None  # audio-only card: no empty grey box
-        size = block.get("size", "fill")
-        f = self._block_frame(row, selected)
-        holder = tk.Frame(f, background=theme.IMAGE_BG,
-                          height=self._px(T.IMAGE_PX.get(size, 160)))
+    def _image_area(self, parent, size: str, placeholder: str = ""):
+        """A dark box that shows a picture scaled to fit. Returns set_path(path)."""
+        holder = tk.Frame(parent, background=theme.IMAGE_BG, height=self._px(T.IMAGE_PX.get(size, 160)))
         holder.pack(fill="both", expand=(size == "fill"))
         holder.pack_propagate(False)
         lbl = tk.Label(holder, background=theme.IMAGE_BG, foreground=theme.MUTED,
-                       font=("Segoe UI", self._px(10)),
-                       text="" if has else "Screenshot (none on this card)")
+                       font=("Segoe UI", self._px(10)), text=placeholder)
         lbl.pack(fill="both", expand=True)
-        if has:
-            with Image.open(path) as im:
-                original = im.copy()
-            state = {"size": None}
+        state = {"img": None, "size": None}
 
-            def render(_e=None):
-                w, h = max(lbl.winfo_width() - 4, 40), max(lbl.winfo_height() - 4, 40)
-                if state["size"] == (w, h):
-                    return
-                state["size"] = (w, h)
-                img = original.copy()
-                img.thumbnail((w, h))
-                photo = ImageTk.PhotoImage(img)
-                self._images.append(photo)
-                del self._images[:-12]
-                lbl.configure(image=photo)
-            lbl.bind("<Configure>", render, add="+")
+        def render(_e=None):
+            if state["img"] is None:
+                return
+            w, h = max(lbl.winfo_width() - 4, 40), max(lbl.winfo_height() - 4, 40)
+            if state["size"] == (w, h):
+                return
+            state["size"] = (w, h)
+            img = state["img"].copy()
+            img.thumbnail((w, h))
+            photo = ImageTk.PhotoImage(img)
+            self._images.append(photo)
+            del self._images[:-24]
+            lbl.configure(image=photo, text="")
+
+        def set_path(path: str):
+            state["img"], state["size"] = None, None
+            if path and os.path.isfile(path) and Image is not None:
+                try:
+                    with Image.open(path) as im:
+                        im.seek(0)                      # first frame of a GIF
+                        state["img"] = im.convert("RGB") if im.mode not in ("RGB", "RGBA") else im.copy()
+                except OSError:
+                    state["img"] = None
+            if state["img"] is None:
+                lbl.configure(image="", text=placeholder or "(picture can't be shown)")
+            render()
+        lbl.bind("<Configure>", render, add="+")
+        return set_path
+
+    def _draw_image(self, row, block: dict, card: dict, abs_path, selected: bool):
+        i, img = T.resolve_image(block, self._card_images)
+        path = abs_path(img["path"]) if img else ""
+        has = bool(path) and os.path.isfile(path) and Image is not None
+        if not has and not self.editing:
+            return None  # this card has no such image: no empty grey box
+        f = self._block_frame(row, selected)
+        title = T.block_title(block, self._card_images)
+        set_path = self._image_area(f, block.get("size", "fill"),
+                                    "" if has else f"{title} (not on this card)")
+        set_path(path if has else "")
+        return f
+
+    def _draw_slideshow(self, row, block: dict, abs_path, selected: bool):
+        images = [img for img in self._card_images if os.path.isfile(abs_path(img["path"]))]
+        if not images and not self.editing:
+            return None
+        f = self._block_frame(row, selected)
+        set_path = self._image_area(f, block.get("size", "fill"),
+                                    "Slideshow (this card has no images)" if not images else "")
+        if not images:
+            return f
+        state = {"i": 0, "job": None}
+        counter = tk.StringVar()
+
+        def show(i):
+            state["i"] = i % len(images)
+            set_path(abs_path(images[state["i"]]["path"]))
+            counter.set(f"{state['i'] + 1} / {len(images)}")
+
+        if len(images) > 1:
+            bar = tk.Frame(f, background=theme.BG)
+            bar.pack(pady=(self._px(4), 0))
+            ttk.Button(bar, text="◀", width=3, takefocus=False,
+                       command=lambda: (show(state["i"] - 1), restart())).pack(side="left")
+            tk.Label(bar, textvariable=counter, background=theme.BG, foreground=theme.MUTED,
+                     font=("Segoe UI", self._px(10)), width=7).pack(side="left")
+            ttk.Button(bar, text="▶", width=3, takefocus=False,
+                       command=lambda: (show(state["i"] + 1), restart())).pack(side="left")
+
+        interval = int(block.get("interval", 0) or 0)
+
+        def tick():
+            show(state["i"] + 1)
+            state["job"] = f.after(interval * 1000, tick)
+
+        def restart():
+            if state["job"]:
+                f.after_cancel(state["job"])
+                state["job"] = None
+            if interval and len(images) > 1 and not self.editing:
+                state["job"] = f.after(interval * 1000, tick)
+
+        def stop(_e=None):
+            if state["job"]:
+                try:
+                    f.after_cancel(state["job"])
+                except tk.TclError:
+                    pass
+                state["job"] = None
+        f.bind("<Destroy>", stop, add="+")
+        show(0)
+        restart()
         return f

@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import json
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import templates as T
 import theme
 from audio import stop_wav
 from card_view import CardView
+from cards import IMAGE_TYPES, card_images
 
 SAMPLE_CARD = {"target_word": "夜", "reading": "よる", "definition": "night; evening",
                "sentence": "夜に駆ける", "source_file": "example video.mp4", "start": 83.0,
@@ -38,12 +39,17 @@ EDGE = 0.3   # top/bottom share of a row that means "new row" rather than "besid
 
 
 class TemplateEditor(tk.Toplevel):
-    def __init__(self, app, template: dict, cards, on_save):
+    def __init__(self, app, template: dict, cards, on_save, card: dict | None = None, on_reset=None):
+        """card=None edits the default layout (every card without its own);
+        given a card, edits that card's own layout only."""
         super().__init__(app)
         self.app = app
         self.cards = cards
         self.on_save = on_save
-        self.title(f"Card layout  ·  {app.profile['name']}")
+        self.card = card
+        self.on_reset = on_reset
+        self.title(f"Card layout  ·  {'this card: ' + card['target_word'] if card else 'all cards'}"
+                   f"  ·  {app.profile['name']}")
         theme.dark_title_bar(self)
         self.geometry("1320x840")
         self.minsize(1140, 720)
@@ -53,8 +59,12 @@ class TemplateEditor(tk.Toplevel):
         self.history: list[dict] = []
         self.selected: str = ""             # id of the selected block
         self.preview_side = "front"
-        samples = cards.cards_in(cards.selected_deck) or cards.cards
-        self.samples = samples or [SAMPLE_CARD]
+        if card is not None:
+            self.samples = [card]
+        else:
+            samples = cards.cards_in(cards.selected_deck) or cards.cards
+            self.samples = samples or [SAMPLE_CARD]
+        self.images_open = True
         self.sample_i = 0
         self._drag: dict | None = None
         self.list_rows: dict[str, list] = {"front": [], "back": []}   # geometry of the lists
@@ -87,6 +97,20 @@ class TemplateEditor(tk.Toplevel):
         s.configure("Hint.TLabel", foreground=theme.SUBTLE, font=("Segoe UI", 9))
 
     def _build(self):
+        banner = tk.Frame(self, background=theme.SELECT if self.card else theme.SURFACE)
+        banner.pack(fill="x")
+        if self.card:
+            text = (f"Customizing ONE card:  “{self.card['target_word']}”.  "
+                    "Other cards keep the default layout.")
+        else:
+            n = sum(1 for c in self.cards.cards if c.get("layout"))
+            text = ("Default layout — used by every card that doesn't have its own."
+                    + (f"  ({n} card{'s have' if n != 1 else ' has'} its own layout.)" if n else ""))
+        tk.Label(banner, text=text, background=banner["background"], foreground=theme.FG,
+                 font=("Segoe UI", 10, "bold" if self.card else "normal"), padx=14, pady=6).pack(side="left")
+        if self.card:
+            ttk.Button(banner, text="Use the default layout for this card",
+                       command=self.use_default_for_card).pack(side="right", padx=10, pady=4)
         body = ttk.Frame(self, padding=(14, 12, 14, 6))
         body.pack(fill="both", expand=True)
         body.columnconfigure(2, weight=1)
@@ -101,13 +125,15 @@ class TemplateEditor(tk.Toplevel):
                   style="Hint.TLabel", justify="left").pack(anchor="w", pady=(2, 10))
         self.palette = tk.Frame(pal, background=theme.BG)
         self.palette.pack(fill="both", expand=True, anchor="n")
-        for kind in T.BLOCK_TYPES:
-            chip = self._make_chip(self.palette, kind)
-            chip.pack(fill="x", pady=3)
-            self._bind_drag(chip, ("palette", kind))
-            for w in self._chip_widgets(chip):
-                w.bind("<Double-1>", lambda e, k=kind: self.add_block(
-                    k, ("row", self.preview_side, len(self.tpl[self.preview_side]["rows"]))), add="+")
+        for kind in T.palette_types():
+            self._palette_chip(self.palette, kind)
+        # ---- Images (a collapsible section: one block per image, Add image, Slideshow)
+        self.images_toggle = tk.Label(self.palette, background=theme.BG, foreground=theme.FG,
+                                      font=("Segoe UI", 10, "bold"), anchor="w", cursor="hand2")
+        self.images_toggle.pack(fill="x", pady=(10, 2))
+        self.images_toggle.bind("<Button-1>", lambda e: self._toggle_images())
+        self.images_box = tk.Frame(self.palette, background=theme.BG)
+        self.images_box.pack(fill="x")
         self.trash_hint = ttk.Label(pal, text="Drop a block here to remove it", style="Hint.TLabel")
         self.trash_hint.pack(anchor="w", pady=(8, 0))
 
@@ -153,7 +179,8 @@ class TemplateEditor(tk.Toplevel):
             ttk.Radiobutton(bar, text=text, value=value, variable=self.mode_var, style="Seg.Toolbutton",
                             command=self._mode_changed).pack(side="left", padx=(16 if value == "edit" else 0, 0))
         nav = ttk.Frame(bar)
-        nav.pack(side="right")
+        if self.card is None:
+            nav.pack(side="right")
         ttk.Button(nav, text="◀", width=3, command=lambda: self._step_sample(-1)).pack(side="left")
         self.sample_var = tk.StringVar()
         ttk.Label(nav, textvariable=self.sample_var, foreground=theme.MUTED, width=16,
@@ -189,8 +216,105 @@ class TemplateEditor(tk.Toplevel):
         ttk.Button(bottom, text="Save", style="Save.TButton", command=self.save).pack(side="right")
         ttk.Button(bottom, text="Close", command=self.close).pack(side="right", padx=6)
 
+    # ---------------------------------------------------------------- palette
+    def _palette_chip(self, parent, kind: str, extra: dict | None = None, title: str = "",
+                      removable_image: str = "") -> tk.Frame:
+        """A draggable palette entry; double-click adds it on a new bottom row."""
+        chip = self._make_chip(parent, kind, title=title, remove_image=removable_image)
+        indent = parent is getattr(self, "images_box", None)   # entries inside the Images section
+        chip.pack(fill="x", pady=3, padx=(10, 0) if indent else 0)
+        src = ("palette", kind, extra or {})
+        self._bind_drag(chip, src)
+        for w in self._chip_widgets(chip):
+            if w is chip.remove_label:
+                continue
+            w.bind("<Double-1>", lambda e, s=src: self.add_block(
+                s[1], ("row", self.preview_side, len(self.tpl[self.preview_side]["rows"])), s[2]), add="+")
+        return chip
+
+    def _preview_card(self) -> dict | None:
+        """The real card being previewed (None for the built-in example)."""
+        card = self.samples[self.sample_i]
+        return None if card is SAMPLE_CARD else card
+
+    def _images(self) -> list[dict]:
+        card = self._preview_card()
+        return card_images(card) if card else []
+
+    def _toggle_images(self):
+        self.images_open = not self.images_open
+        self._refresh_images()
+
+    def _refresh_images(self):
+        """Rebuild the Images section for the card being previewed."""
+        for w in self.images_box.winfo_children():
+            w.destroy()
+        card = self._preview_card()
+        images = self._images()
+        self.images_toggle.configure(text=f"{'▾' if self.images_open else '▸'}  Images ({len(images)})")
+        if not self.images_open:
+            return
+        box = self.images_box
+        if self.card is None:
+            # default layout: blocks mean "a card's 1st / 2nd ... image"
+            hint = "In the default layout, Image 1 = each card's first image, and so on."
+            for n in range(1, max(len(images), 1) + 1):
+                name = f"  ·  {images[n - 1]['name']}" if n <= len(images) else ""
+                self._palette_chip(box, "image", {"image": f"#{n}"}, title=f"Image {n}{name}")
+        else:
+            hint = "Blocks for this card's own images."
+            for n, img in enumerate(images, 1):
+                self._palette_chip(box, "image", {"image": img["id"]}, title=f"Image {n} · {img['name']}",
+                                   removable_image=img["id"])
+            if not images:
+                tk.Label(box, text="This card has no images yet.", background=theme.BG,
+                         foreground=theme.SUBTLE, font=("Segoe UI", 9)).pack(anchor="w", padx=10)
+        if len(images) > 1:
+            self._palette_chip(box, "slideshow", title=f"Slideshow  ({len(images)} images)")
+        add = ttk.Button(box, text="＋  Add image...", command=self.add_images,
+                         state="normal" if card else "disabled")
+        add.pack(anchor="w", padx=(10, 0), pady=(4, 2))
+        tk.Label(box, text=hint if card else "Make some cards first to add images.", background=theme.BG,
+                 foreground=theme.SUBTLE, font=("Segoe UI", 8), wraplength=210, justify="left"
+                 ).pack(anchor="w", padx=(10, 0))
+
+    def add_images(self):
+        card = self._preview_card()
+        if card is None:
+            return
+        paths = filedialog.askopenfilenames(
+            parent=self, title=f"Add images to “{card['target_word']}”",
+            filetypes=[("Pictures", " ".join(f"*{e}" for e in IMAGE_TYPES)), ("All files", "*.*")])
+        added = 0
+        for p in paths:
+            try:
+                self.cards.add_image(card["id"], p)
+                added += 1
+            except (ValueError, OSError) as err:
+                messagebox.showwarning("Add image", str(err), parent=self)
+        if added:
+            self.status_var.set(f"Added {added} image{'s' if added != 1 else ''} to “{card['target_word']}”.")
+            self.app.on_cards_changed()
+            self._refresh_images()
+            self._refresh_preview()
+            self._refresh_lists()
+
+    def remove_image(self, image_id: str):
+        card = self._preview_card()
+        img = next((i for i in self._images() if i["id"] == image_id), None)
+        if card is None or img is None:
+            return
+        if not messagebox.askyesno("Remove image", f"Remove the image “{img['name']}” from this card?\n\n"
+                                   "The picture file is deleted. (Undo can't bring it back.)", parent=self):
+            return
+        self.cards.remove_image(card["id"], image_id)
+        self.app.on_cards_changed()
+        self._refresh_images()
+        self._refresh_all()
+
     # ---------------------------------------------------------------- chips
-    def _make_chip(self, parent, kind: str, block_id: str = "", compact: bool = False) -> tk.Frame:
+    def _make_chip(self, parent, kind: str, block_id: str = "", compact: bool = False,
+                   title: str = "", remove_image: str = "") -> tk.Frame:
         info = T.BLOCK_TYPES[kind]
         chip = tk.Frame(parent, background=theme.RAISED, highlightthickness=1,
                         highlightbackground=theme.BORDER, cursor="fleur")
@@ -199,15 +323,18 @@ class TemplateEditor(tk.Toplevel):
                      font=("Segoe UI", 11)).pack(side="left", padx=(6, 2), pady=5)
         tk.Label(chip, text=info["icon"], background=theme.RAISED, foreground=theme.ACCENT,
                  font=("Segoe UI", 11, "bold"), width=2).pack(side="left", padx=(4 if compact else 0, 0), pady=5)
-        tk.Label(chip, text=info["label"], background=theme.RAISED, foreground=theme.FG,
+        tk.Label(chip, text=title or info["label"], background=theme.RAISED, foreground=theme.FG,
                  font=("Segoe UI", 10), anchor="w", width=1 if compact else 0
                  ).pack(side="left", fill="x", expand=True, padx=(4, 2))
         chip.remove_label = None
-        if block_id:
+        if block_id or remove_image:
             x = tk.Label(chip, text="✕", background=theme.RAISED, foreground=theme.MUTED,
                          font=("Segoe UI", 10), cursor="hand2", padx=6)
             x.pack(side="right")
-            x.bind("<Button-1>", lambda e, bid=block_id: (self.remove_block(bid), "break")[1])
+            if block_id:
+                x.bind("<Button-1>", lambda e, bid=block_id: (self.remove_block(bid), "break")[1])
+            else:  # a palette image: ✕ removes the picture from the card
+                x.bind("<Button-1>", lambda e, iid=remove_image: (self.remove_image(iid), "break")[1])
             chip.remove_label = x
         chip.kind = kind
         chip.block_id = block_id
@@ -249,7 +376,8 @@ class TemplateEditor(tk.Toplevel):
                 rf.pack(fill="x", padx=6, pady=(6, 0))
                 items = []
                 for b in row:
-                    chip = self._make_chip(rf, b["type"], block_id=b["id"], compact=multi)
+                    chip = self._make_chip(rf, b["type"], block_id=b["id"], compact=multi,
+                                           title=T.block_title(b, self._images()))
                     chip.pack(side="left", fill="x", expand=True, padx=2 if multi else 0, pady=2 if multi else 0)
                     self._bind_drag(chip, ("block", b["id"]))
                     if b["id"] == self.selected:
@@ -280,8 +408,13 @@ class TemplateEditor(tk.Toplevel):
         if d["ghost"] is None:
             if abs(e.x_root - d["x"]) + abs(e.y_root - d["y"]) < 6:
                 return  # still a click, not a drag
-            kind = d["src"][1] if d["src"][0] == "palette" else T.find(self.tpl, d["src"][1])[3]["type"]
-            d["ghost"] = self._make_ghost(kind)
+            if d["src"][0] == "palette":
+                kind, extra = d["src"][1], d["src"][2]
+                title = T.block_title(T.new_block(kind, **extra), self._images())
+            else:
+                block = T.find(self.tpl, d["src"][1])[3]
+                kind, title = block["type"], T.block_title(block, self._images())
+            d["ghost"] = self._make_ghost(kind, title)
         d["ghost"].geometry(f"+{e.x_root + 14}+{e.y_root + 8}")
         target, ind = self._drop_target(e.x_root, e.y_root)
         self._show_indicator(ind)
@@ -303,13 +436,13 @@ class TemplateEditor(tk.Toplevel):
         target, _ = self._drop_target(e.x_root, e.y_root)
         if target:
             if src[0] == "palette":
-                self.add_block(src[1], target)
+                self.add_block(src[1], target, src[2])
             else:
                 self.move_block(src[1], target)
         elif src[0] == "block" and self._over(self.palette, e.x_root, e.y_root):
             self.remove_block(src[1])
 
-    def _make_ghost(self, kind: str) -> tk.Toplevel:
+    def _make_ghost(self, kind: str, title: str = "") -> tk.Toplevel:
         g = tk.Toplevel(self)
         g.overrideredirect(True)
         try:
@@ -318,7 +451,7 @@ class TemplateEditor(tk.Toplevel):
         except tk.TclError:
             pass
         info = T.BLOCK_TYPES[kind]
-        tk.Label(g, text=f"  {info['icon']}   {info['label']}  ", background=theme.ACCENT,
+        tk.Label(g, text=f"  {info['icon']}   {title or info['label']}  ", background=theme.ACCENT,
                  foreground="#ffffff", font=("Segoe UI", 10, "bold"), pady=5).pack()
         return g
 
@@ -385,9 +518,9 @@ class TemplateEditor(tk.Toplevel):
         self.history.append(T.clone(self.tpl))
         del self.history[:-60]
 
-    def add_block(self, kind: str, target):
+    def add_block(self, kind: str, target, extra: dict | None = None):
         self._push()
-        block = T.new_block(kind)
+        block = T.new_block(kind, **(extra or {}))
         T.insert(self.tpl, block, target)
         self.selected = block["id"]
         self.preview_side = target[1]
@@ -507,6 +640,8 @@ class TemplateEditor(tk.Toplevel):
 
     def _step_sample(self, delta: int):
         self.sample_i = (self.sample_i + delta) % len(self.samples)
+        self._refresh_images()
+        self._refresh_lists()
         if self.mode_var.get() == "test":
             self.preview_side = "front"
             self.side_var.set("front")
@@ -535,12 +670,14 @@ class TemplateEditor(tk.Toplevel):
         else:
             self.preview_side = "front"
             self.sample_i = (self.sample_i + 1) % len(self.samples)
+            self._refresh_images()
         self.side_var.set(self.preview_side)
         self._refresh_preview(autoplay=True)
 
     # ============================================================ refreshing
     def _refresh_all(self):
         self.side_var.set(self.preview_side)
+        self._refresh_images()
         self._refresh_lists()
         self._refresh_preview()
         self._refresh_props()
@@ -551,6 +688,8 @@ class TemplateEditor(tk.Toplevel):
         real = card is not SAMPLE_CARD
         testing = self.mode_var.get() == "test"
         self.sample_var.set(f"card {self.sample_i + 1} of {len(self.samples)}" if real else "example card")
+        if self.card is not None:
+            self.sample_var.set("this card")
         self.preview.mode = "test" if testing else "edit"
         side = self.tpl[self.preview_side]
         self.preview.show(card, side, self.cards.abs_path if real else (lambda rel: ""),
@@ -586,16 +725,19 @@ class TemplateEditor(tk.Toplevel):
         row_len = len(self.tpl[side]["rows"][r])
         head = ttk.Frame(self.props)
         head.pack(fill="x", pady=(0, 6))
-        ttk.Label(head, text=f"{info['icon']}  {info['label']}", style="Head.TLabel").pack(side="left")
+        ttk.Label(head, text=f"{info['icon']}  {T.block_title(block, self._images())}",
+                  style="Head.TLabel").pack(side="left")
         where = f"on the {SIDE_LABEL[side].lower()}, row {r + 1}" + \
                 (f", {c + 1} of {row_len} side by side" if row_len > 1 else "")
         ttk.Label(head, text=where, foreground=theme.MUTED).pack(side="left", padx=8)
-        for text, cmd in (("✕  Remove", lambda: self.remove_block(block["id"])),
+        actions = ttk.Frame(self.props)   # own line, so long titles can't push buttons off-screen
+        actions.pack(fill="x", pady=(0, 6))
+        for text, cmd in (("↑", lambda: self.nudge(-1, 0)), ("↓", lambda: self.nudge(1, 0)),
+                          ("←", lambda: self.nudge(0, -1)), ("→", lambda: self.nudge(0, 1)),
+                          (f"⇄  Move to {('back' if side == 'front' else 'front')}", self.move_selected_to_other_side),
                           ("⧉  Duplicate", self.duplicate_selected),
-                          (f"⇄  To {('back' if side == 'front' else 'front')}", self.move_selected_to_other_side),
-                          ("→", lambda: self.nudge(0, 1)), ("←", lambda: self.nudge(0, -1)),
-                          ("↓", lambda: self.nudge(1, 0)), ("↑", lambda: self.nudge(-1, 0))):
-            ttk.Button(head, text=text, command=cmd, width=3 if len(text) == 1 else 0).pack(side="right", padx=(4, 0))
+                          ("✕  Remove", lambda: self.remove_block(block["id"]))):
+            ttk.Button(actions, text=text, command=cmd, width=3 if len(text) == 1 else 0).pack(side="left", padx=(0, 4))
 
         grid = ttk.Frame(self.props)
         grid.pack(fill="x")
@@ -614,6 +756,34 @@ class TemplateEditor(tk.Toplevel):
 
         if block["type"] == "image":
             segmented("Size", "size", T.IMAGE_SIZES)
+            images = self._images()
+            if self.card is None:
+                n = max(len(images), int((block.get("image") or "#1").lstrip("#") or 1), 3)
+                options = [(f"#{i}", f"Image {i}" + (" (each card's first)" if i == 1 else ""))
+                           for i in range(1, n + 1)]
+            else:
+                options = [(img["id"], f"Image {i} · {img['name']}") for i, img in enumerate(images, 1)]
+            ttk.Label(grid, text="Which image", foreground=theme.MUTED).grid(row=row, column=0, sticky="w", pady=3)
+            labels = [t for _, t in options]
+            current = next((t for v, t in options if v == (block.get("image") or "#1")), "")
+            which = ttk.Combobox(grid, values=labels, state="readonly", width=34)
+            which.set(current or "(image removed — pick another)")
+            which.grid(row=row, column=1, sticky="w", pady=3)
+            which.bind("<<ComboboxSelected>>",
+                       lambda e: self.set_prop("image", options[which.current()][0]) or self._refresh_lists())
+            row += 1
+        elif block["type"] == "slideshow":
+            segmented("Size", "size", T.IMAGE_SIZES)
+            ttk.Label(grid, text="Auto-advance", foreground=theme.MUTED).grid(row=row, column=0, sticky="w", pady=3, padx=(0, 12))
+            iv = tk.StringVar(value=str(block.get("interval", 0)))
+            f = ttk.Frame(grid)
+            f.grid(row=row, column=1, sticky="w", pady=3)
+            for value, text in T.INTERVALS:
+                ttk.Radiobutton(f, text=text, value=str(value), variable=iv, style="Seg.Toolbutton",
+                                command=lambda: self.set_prop("interval", int(iv.get()))).pack(side="left")
+            row += 1
+            ttk.Label(grid, text="Shows all of the card's images, one at a time, with ◀ ▶ buttons.",
+                      foreground=theme.SUBTLE).grid(row=row, column=1, sticky="w")
         elif info["text"]:
             segmented("Size", "size", T.TEXT_SIZES)
             segmented("Alignment", "align", T.ALIGNS)
@@ -638,6 +808,17 @@ class TemplateEditor(tk.Toplevel):
         else:
             ttk.Label(grid, text="This block has no settings — drag it to where you want it.",
                       foreground=theme.MUTED).grid(row=0, column=0, sticky="w")
+
+    def use_default_for_card(self):
+        if not messagebox.askyesno(
+                "Use the default layout",
+                f"Remove this card's own layout? “{self.card['target_word']}” will look like every other "
+                "card again. (Its images stay on the card.)", parent=self):
+            return
+        if self.on_reset:
+            self.on_reset()
+        self.saved_json = self._json()   # nothing left to save
+        self.close()
 
     # ============================================================ save / close
     def save(self):

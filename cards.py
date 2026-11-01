@@ -21,6 +21,17 @@ import uuid
 from media import safe_name
 
 FIELDS = ("target_word", "reading", "definition")
+IMAGE_TYPES = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+
+
+def card_images(card: dict) -> list[dict]:
+    """A card's images in order: [{"id", "path", "name"}]. Cards made before
+    multiple images existed just have their screenshot, which is image 1."""
+    if "images" in card:
+        return list(card["images"])
+    if card.get("screenshot"):
+        return [{"id": "shot", "path": card["screenshot"], "name": "Screenshot"}]
+    return []
 ALL = ""  # "deck id" meaning every card, whatever its decks
 
 
@@ -194,8 +205,9 @@ class CardStore:
         for c in self.cards:
             (gone if c["id"] in ids else keep).append(c)
         for c in gone:
-            for key in ("audio_clip", "screenshot"):
-                p = self.abs_path(c.get(key, ""))
+            paths = {c.get("audio_clip", ""), c.get("screenshot", "")} | {i["path"] for i in card_images(c)}
+            for rel in paths:
+                p = self.abs_path(rel)
                 if p and os.path.isfile(p):
                     try:
                         os.remove(p)
@@ -205,3 +217,57 @@ class CardStore:
         if gone:
             self._write()
         return len(gone)
+
+    # ------------------------------------------------------------ images
+    def add_image(self, card_id: str, src: str) -> dict:
+        """Copy a picture file into the cards folder and add it to the card."""
+        card = self.get(card_id)
+        if card is None:
+            raise ValueError("Card not found.")
+        ext = os.path.splitext(src)[1].lower()
+        if ext not in IMAGE_TYPES:
+            raise ValueError(f"{os.path.basename(src)} isn't a supported picture "
+                             f"({', '.join(IMAGE_TYPES)}).")
+        os.makedirs(self.media_dir, exist_ok=True)
+        uid = uuid.uuid4().hex[:8]
+        name = f"img_{card_id}_{uid}{ext}"
+        shutil.copy2(src, os.path.join(self.media_dir, name))
+        images = card_images(card)
+        image = {"id": uid, "path": f"media/{name}",
+                 "name": os.path.splitext(os.path.basename(src))[0][:40]}
+        images.append(image)
+        card["images"] = images
+        card["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        self._write()
+        return image
+
+    def remove_image(self, card_id: str, image_id: str) -> None:
+        card = self.get(card_id)
+        if card is None:
+            return
+        images = card_images(card)
+        gone = [i for i in images if i["id"] == image_id]
+        card["images"] = [i for i in images if i["id"] != image_id]
+        for img in gone:
+            if img["path"] == card.get("screenshot"):
+                card["screenshot"] = ""
+            p = self.abs_path(img["path"])
+            if p and os.path.isfile(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+        self._write()
+
+    # ------------------------------------------------------------ per-card layout
+    def set_layout(self, card_id: str, layout: dict | None) -> None:
+        """Give one card its own layout (a template), or None to go back to
+        the profile's default layout."""
+        card = self.get(card_id)
+        if card is None:
+            return
+        if layout is None:
+            card.pop("layout", None)
+        else:
+            card["layout"] = layout
+        self._write()

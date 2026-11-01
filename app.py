@@ -23,7 +23,7 @@ from card_view import CardView
 import subtitles
 import theme
 import transcriber as tr
-from cards import ALL, CardStore
+from cards import ALL, CardStore, card_images
 from profiles import ProfileStore
 from saved import SavedStore
 
@@ -597,7 +597,8 @@ class CardsWindow(RecordWindow):
         ("definition", "Definition", 220, True, "w"),
         ("sentence", "Sentence", 280, True, "w"),
         ("decks", "Decks", 130, False, "w"),
-        ("media", "Media", 55, False, "center"),
+        ("media", "Media", 60, False, "center"),
+        ("layout", "Layout", 70, False, "center"),
     )
     @property
     def FOLDER(self):  # noqa: N802 - the signed-in profile's cards folder
@@ -633,8 +634,10 @@ class CardsWindow(RecordWindow):
     def row(self, c):
         one_line = lambda s: " ".join(s.split())  # noqa: E731 - definitions may be multi-line
         decks = ", ".join(self.app.cards.deck_name(d) for d in c.get("decks", []))
+        n = len(card_images(c))
+        media = ("♪" if c.get("audio_clip") else "") + (f" ▣×{n}" if n > 1 else " ▣" if n else "")
         return (c["target_word"], c["reading"], one_line(c["definition"]),
-                c["sentence"], decks, self.media_icons(c))
+                c["sentence"], decks, media.strip(), "custom" if c.get("layout") else "")
 
     def search_text(self, c):
         return " ".join((c["target_word"], c["reading"], c["definition"], c["sentence"]))
@@ -642,9 +645,10 @@ class CardsWindow(RecordWindow):
     def preview_record(self, c):
         meta = (f"{os.path.basename(c.get('source_file', ''))}  ·  {tr.fmt_time(c.get('start', 0))}"
                 f"  ·  created {c.get('created_at', '')[:10]}")
+        images = card_images(c)
         self.preview.show(c["sentence"], meta,
                           audio=self.app.cards.abs_path(c.get("audio_clip", "")),
-                          shot=self.app.cards.abs_path(c.get("screenshot", "")),
+                          shot=self.app.cards.abs_path(images[0]["path"]) if images else "",
                           card=c)
 
     def remove(self, ids):
@@ -654,11 +658,13 @@ class CardsWindow(RecordWindow):
     def add_actions(self, bar, menu):
         ttk.Button(bar, text="Study cards", command=self.app.show_study).pack(side="left", padx=(0, 6))
         ttk.Button(bar, text="Card layout...", command=self.app.edit_template).pack(side="left", padx=(0, 6))
+        ttk.Button(bar, text="Customize this card...", command=self.customize_card).pack(side="left", padx=(0, 6))
         ttk.Button(bar, text="✎  Edit card...", command=self.edit_card).pack(side="left")
         self.deck_menu = tk.Menu(self, tearoff=False, postcommand=self._fill_deck_menu)
         self.add_deck_btn = ttk.Button(bar, text="Add to deck  ▾", command=self._popup_deck_menu)
         self.add_deck_btn.pack(side="left", padx=(6, 0))
         menu.add_command(label="✎  Edit card...", command=self.edit_card)
+        menu.add_command(label="Customize this card's layout...", command=self.customize_card)
         menu.add_cascade(label="Add to deck", menu=self.deck_menu)
         self.tree.bind("<Return>", lambda e: self.edit_card())
         self.bind("<Control-e>", lambda e: self.edit_card())
@@ -704,6 +710,13 @@ class CardsWindow(RecordWindow):
             self.app.on_decks_changed()
             self.add_to_deck(deck["id"])
 
+    def customize_card(self):
+        c = self.focused()
+        if not c:
+            messagebox.showinfo("No card selected", "Select a card first.", parent=self)
+            return
+        self.app.edit_template(c)
+
     def edit_card(self):
         c = self.focused()
         if not c:
@@ -743,8 +756,15 @@ class StudyScreen(ttk.Frame):
         ttk.Button(head, text="←  Main menu", command=app.show_home,
                    takefocus=False).pack(side="left")
         ttk.Label(head, textvariable=self.progress_var, foreground=theme.MUTED).pack(side="left", padx=12)
-        ttk.Button(head, text="✎  Edit card layout", command=app.edit_template,
-                   takefocus=False).pack(side="right")
+        edit = ttk.Menubutton(head, text="✎  Edit layout  ▾", takefocus=False)
+        menu = tk.Menu(edit, tearoff=False)
+        menu.add_command(label="This card only...", command=lambda: (
+            self.current() and app.edit_template(self.current())))
+        menu.add_command(label="All cards (default layout)...", command=app.edit_template)
+        edit["menu"] = menu
+        edit.pack(side="right")
+        self.layout_var = tk.StringVar()
+        ttk.Label(head, textvariable=self.layout_var, foreground=theme.SUBTLE).pack(side="right", padx=10)
 
         # the card itself, drawn from the profile's card template (templates.py)
         self.view = CardView(self)
@@ -816,7 +836,8 @@ class StudyScreen(ttk.Frame):
         self.flipped = False
         c = self.current()
         self._update_progress()
-        tpl = self.app.template
+        tpl = self.app.layout_for(c)
+        self.layout_var.set("This card has its own layout" if c and c.get("layout") else "")
         if c is None:
             if self.app.cards.cards and self.deck_id != ALL:
                 msg = ("This deck is empty.\n\nChoose another deck on the main menu, or add cards "
@@ -836,7 +857,7 @@ class StudyScreen(ttk.Frame):
         if c is None:
             return
         self.flipped = True
-        tpl = self.app.template
+        tpl = self.app.layout_for(c)
         self.view.show(c, tpl["back"], self._abs, empty_text="(The back of this card layout is empty.)")
         self.action_btn.config(text="Next card  →", state="normal")
         if autoplay and tpl["back"].get("autoplay"):
@@ -845,7 +866,7 @@ class StudyScreen(ttk.Frame):
     def replay(self):
         """R key: play the clip if the visible side shows or autoplays audio
         (so a front without audio doesn't give the answer away)."""
-        side = self.app.template["back" if self.flipped else "front"]
+        side = self.app.layout_for(self.current())["back" if self.flipped else "front"]
         if side.get("autoplay") or any(b["type"] == "audio" for b in templates.blocks(side)):
             self.view.play()
 
@@ -1809,25 +1830,50 @@ class App(tk.Tk):
         self._raise_main()
         self.study_screen.focus_set()
         st = self.study_screen
-        if not st.flipped and st.current() is not None and self.template["front"].get("autoplay"):
+        if not st.flipped and st.current() is not None and self.layout_for(st.current())["front"].get("autoplay"):
             st.view.play()
 
     # ------------------------------------------------------------ card layout
-    def edit_template(self):
-        """Open the drag-and-drop card layout editor (one per profile)."""
+    def layout_for(self, card: dict | None) -> dict:
+        """The layout a card is drawn with: its own if it has one, else the default."""
+        if card and card.get("layout"):
+            return templates.normalize(card["layout"])
+        return self.template
+
+    def edit_template(self, card: dict | None = None):
+        """Open the drag-and-drop layout editor: for every card (the default
+        layout), or - given a card - for that card only."""
         from template_editor import TemplateEditor
         stop_wav()
-        if self.template_window and self.template_window.winfo_exists():
-            self.template_window.deiconify()
-            self.template_window.lift()
-            self.template_window.focus_force()
-            return
-        self.template_window = TemplateEditor(self, self.template, self.cards, self.save_template)
+        win = self.template_window
+        if win and win.winfo_exists():
+            if (win.card or {}).get("id") == (card or {}).get("id"):
+                win.deiconify()
+                win.lift()
+                win.focus_force()
+                return
+            win.close()                   # asks to save if needed
+            if win.winfo_exists():        # the user cancelled
+                return
+        if card is None:
+            self.template_window = TemplateEditor(self, self.template, self.cards, self.save_template)
+        else:
+            start = card.get("layout") or self.template
+            self.template_window = TemplateEditor(
+                self, start, self.cards, lambda tpl, cid=card["id"]: self.save_card_layout(cid, tpl),
+                card=card, on_reset=lambda cid=card["id"]: self.save_card_layout(cid, None))
 
     def save_template(self, tpl: dict):
         templates.save(self.cards.root, tpl)
         self.template = templates.load(self.cards.root)
         self.study_screen.redraw()
+
+    def save_card_layout(self, card_id: str, tpl: dict | None):
+        """Give one card its own layout (None = back to the default layout)."""
+        self.cards.set_layout(card_id, templates.normalize(tpl) if tpl else None)
+        self.study_screen.redraw()
+        if self.cards_window and self.cards_window.winfo_exists():
+            self.cards_window.refresh()
 
     def _study_key(self, event):
         """Space/Enter/R/Esc on the Study screen. (Other screens' widgets handle

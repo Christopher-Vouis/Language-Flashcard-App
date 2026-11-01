@@ -36,8 +36,13 @@ BLOCK_TYPES: dict[str, dict] = {
     "sentence":   {"label": "Sentence", "icon": "❝", "text": True,
                    "defaults": {"size": "l", "align": "center", "color": "text", "bold": False,
                                 "highlight": True}},
-    "image":      {"label": "Screenshot", "icon": "▣", "text": False,
-                   "defaults": {"size": "fill"}},
+    # image: "image" picks which one - "" or "#1" = a card's 1st image, "#2" its
+    # 2nd, ... (used by the default layout); an image id = that exact image
+    # (used by a single card's own layout). Offered in the palette's Images section.
+    "image":      {"label": "Image", "icon": "▣", "text": False, "palette": False,
+                   "defaults": {"size": "fill", "image": ""}},
+    "slideshow":  {"label": "Slideshow", "icon": "⧉", "text": False, "palette": False,
+                   "defaults": {"size": "fill", "interval": 0}},
     "audio":      {"label": "Audio button", "icon": "▶", "text": False, "defaults": {}},
     "source":     {"label": "Source (file & time)", "icon": "⏱", "text": True,
                    "defaults": {"size": "s", "align": "center", "color": "subtle", "bold": False}},
@@ -52,9 +57,42 @@ TEXT_SIZES = [("s", "S"), ("m", "M"), ("l", "L"), ("xl", "XL"), ("xxl", "XXL")]
 FONT_PX = {"s": 11, "m": 14, "l": 18, "xl": 26, "xxl": 34}
 IMAGE_SIZES = [("s", "Small"), ("m", "Medium"), ("l", "Large"), ("fill", "Fill space")]
 IMAGE_PX = {"s": 180, "m": 260, "l": 360}
+INTERVALS = [(0, "Off"), (3, "3 s"), (5, "5 s"), (10, "10 s")]   # slideshow auto-advance
 ALIGNS = [("left", "Left"), ("center", "Centre"), ("right", "Right")]
 COLORS = [("text", "Normal"), ("muted", "Soft"), ("subtle", "Faint"),
           ("accent", "Blue"), ("target", "Red")]
+
+
+def palette_types() -> list[str]:
+    """Block types in the main Blocks list (images have their own section)."""
+    return [k for k, v in BLOCK_TYPES.items() if v.get("palette", True)]
+
+
+def resolve_image(block: dict, images: list[dict]) -> tuple[int, dict | None]:
+    """(index, image) an image block shows for a card's images, or (-1, None)."""
+    ref = block.get("image", "") or "#1"
+    if ref.startswith("#"):
+        try:
+            i = int(ref[1:]) - 1
+        except ValueError:
+            i = 0
+        return (i, images[i]) if 0 <= i < len(images) else (i, None)
+    for i, img in enumerate(images):
+        if img["id"] == ref:
+            return i, img
+    return -1, None
+
+
+def block_title(block: dict, images: list[dict] | None = None) -> str:
+    """Name shown on a block chip, e.g. "Image 2 · photo"."""
+    kind = block["type"]
+    if kind == "image":
+        ref = block.get("image", "") or "#1"
+        if ref.startswith("#"):
+            return f"Image {ref[1:]}"
+        i, img = resolve_image(block, images or [])
+        return f"Image {i + 1} · {img['name']}" if img else "Image (removed)"
+    return BLOCK_TYPES[kind]["label"]
 
 
 def new_block(kind: str, **overrides) -> dict:

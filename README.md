@@ -87,7 +87,7 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
   keeping their other decks; decks they're already in are shown ✓, and **＋ New deck...** makes one.
   **Delete selected** removes cards.
 - Cards live in `cards\`: `cards.json` (the decks, plus each card's fields: `target_word`, `reading`, `definition`, `sentence`,
-  `audio_clip`, `screenshot`, `decks`, source file and times) and their own media copies in `cards\media\`,
+  `audio_clip`, `screenshot`, `images`, `decks`, an optional own `layout`, source file and times) and their own media copies in `cards\media\`,
   so deleting a saved line doesn't affect its cards.
 
 ### Study mode
@@ -104,8 +104,12 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
 
 - **✎ Edit card layout** (top right of the Study screen), **Cards → Card layout (front / back)...**, or
   **Card layout...** in the Cards window. Each profile has its own layout.
-- **Blocks** (left): Target word, Reading, Definition, Sentence, Screenshot, Audio button,
-  Source (file & time), Divider line and Custom text.
+- **Blocks** (left): Target word, Reading, Definition, Sentence, Audio button, Source (file & time),
+  Divider line and Custom text — and the **▾ Images** section (click its title to fold it):
+  a block for each image, **＋ Add image...**, and a **Slideshow** block when the card has more than one
+  image (one image at a time with ◀ ▶ and a counter; optional auto-advance every 3/5/10 s).
+  In the default layout, *Image 1* means each card's first image (its screenshot), *Image 2* its
+  second, and so on; in one card's own layout, image blocks are that card's specific pictures.
 - **Drag** blocks from the block list onto the **preview** or the **Front / Back** lists, and drag
   blocks around in either place (or between sides). Where you drop decides the layout:
   - at the **top or bottom edge** of a row → a **new row** there (a horizontal blue line shows it);
@@ -122,6 +126,15 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
   **← →** within its row and **↑ ↓** between rows (a block sharing a row is first given a row of its
   own), duplicate it, send it to the other side, or remove it. Ctrl+arrow keys do the same moves;
   Delete removes it.
+- **Layouts for single cards.** **Customize this card...** in the Cards window (also on right-click), or
+  **Edit layout ▾ → This card only...** on the Study screen, opens the editor for just that card (a blue
+  banner says so). Saving gives that card its own layout; every other card keeps the default. The Cards
+  window's **Layout** column shows *custom*, and study mode notes "This card has its own layout".
+  **Use the default layout for this card** (top right of the editor) removes it again.
+  **Edit layout ▾ → All cards (default layout)...** or **Cards → Card layout** edits the default.
+- **Images on a card.** **＋ Add image...** copies pictures (PNG, JPG, GIF, WebP, BMP) into the card;
+  the **✕** on an image in the Images section removes it from the card (the file is deleted).
+  The card's original screenshot is Image 1. The Cards window's Media column shows ▣×3 etc.
 - **Play audio automatically** can be switched on for either side (e.g. a listening card: audio on the front).
 - **↶ Undo** (Ctrl+Z) undoes any step; **Reset to default layout** brings back the original look;
   **Save** (Ctrl+S) applies it to study mode straight away. Closing with unsaved changes asks first.
