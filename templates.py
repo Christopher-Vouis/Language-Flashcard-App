@@ -1,10 +1,15 @@
 """
 Card templates: how a card looks in study mode.
 
-A template has a front and a back. Each side is a list of blocks shown top
-to bottom, plus an "autoplay" switch (play the audio clip when that side
-appears). Each block shows one thing (the target word, the sentence, the
-screenshot, ...) with a few display settings.
+A template has a front and a back. Each side is a list of ROWS shown top to
+bottom; each row holds one or more BLOCKS shown side by side. A side also has
+an "autoplay" switch (play the audio clip when that side appears). Each block
+shows one thing (the target word, the sentence, the screenshot, ...) with a
+few display settings.
+
+Drop targets used when adding/moving blocks:
+    ("row", side, r)       a new row inserted at row index r
+    ("in",  side, r, c)    inside existing row r, at position c
 
 Saved per profile as  <profile cards folder>/template.json.
 """
@@ -61,38 +66,107 @@ def new_block(kind: str, **overrides) -> dict:
 def default_template() -> dict:
     """Looks exactly like study mode did before templates existed."""
     return {
-        "version": 1,
-        "front": {"autoplay": False, "blocks": [
-            new_block("word"),
-            new_block("sentence"),
-        ]},
-        "back": {"autoplay": True, "blocks": [
-            new_block("word"),
-            new_block("sentence"),
-            new_block("divider"),
-            new_block("reading"),
-            new_block("definition"),
-            new_block("image"),
-            new_block("audio"),
+        "version": 2,
+        "front": {"autoplay": False, "rows": [[new_block("word")], [new_block("sentence")]]},
+        "back": {"autoplay": True, "rows": [
+            [new_block("word")], [new_block("sentence")], [new_block("divider")],
+            [new_block("reading")], [new_block("definition")], [new_block("image")],
+            [new_block("audio")],
         ]},
     }
 
 
+def _clean_block(b) -> dict | None:
+    if not (isinstance(b, dict) and b.get("type") in BLOCK_TYPES):
+        return None
+    nb = new_block(b["type"])
+    nb.update({k: v for k, v in b.items() if k in nb or k == "id"})
+    return nb
+
+
 def normalize(tpl: dict) -> dict:
     """Fill in anything missing and drop unknown blocks, so a hand-edited or
-    older file can't break study mode."""
-    out = {"version": 1}
+    older file can't break study mode. Version-1 files (a flat "blocks" list)
+    become one block per row."""
+    out = {"version": 2}
     base = default_template()
+    seen: set[str] = set()
     for side in ("front", "back"):
-        src = tpl.get(side) if isinstance(tpl.get(side), dict) else base[side]
-        blocks = []
-        for b in src.get("blocks", []):
-            if isinstance(b, dict) and b.get("type") in BLOCK_TYPES:
-                nb = new_block(b["type"])
-                nb.update({k: v for k, v in b.items() if k in nb or k == "id"})
-                blocks.append(nb)
-        out[side] = {"autoplay": bool(src.get("autoplay", base[side]["autoplay"])), "blocks": blocks}
+        src = tpl.get(side) if isinstance(tpl, dict) and isinstance(tpl.get(side), dict) else base[side]
+        raw_rows = src.get("rows")
+        if raw_rows is None:  # version 1
+            raw_rows = [[b] for b in src.get("blocks", [])]
+        rows = []
+        for raw in raw_rows:
+            row = []
+            for b in (raw if isinstance(raw, list) else [raw]):
+                nb = _clean_block(b)
+                if nb:
+                    if nb["id"] in seen:  # ids must be unique across the template
+                        nb["id"] = new_block(nb["type"])["id"]
+                    seen.add(nb["id"])
+                    row.append(nb)
+            if row:
+                rows.append(row)
+        out[side] = {"autoplay": bool(src.get("autoplay", base[side]["autoplay"])), "rows": rows}
     return out
+
+
+# ------------------------------------------------------------ editing helpers
+def blocks(side: dict):
+    """All blocks of a side, top to bottom, left to right."""
+    for row in side.get("rows", []):
+        yield from row
+
+
+def find(tpl: dict, block_id: str):
+    """(side, row index, column index, block) or (None, -1, -1, None)."""
+    for side in ("front", "back"):
+        for r, row in enumerate(tpl[side]["rows"]):
+            for c, b in enumerate(row):
+                if b["id"] == block_id:
+                    return side, r, c, b
+    return None, -1, -1, None
+
+
+def insert(tpl: dict, block: dict, target) -> None:
+    rows = tpl[target[1]]["rows"]
+    if target[0] == "row":
+        rows.insert(max(0, min(target[2], len(rows))), [block])
+    else:
+        _, _, r, c = target
+        if 0 <= r < len(rows):
+            rows[r].insert(max(0, min(c, len(rows[r]))), block)
+        else:
+            rows.append([block])
+
+
+def _drop_empty_rows(tpl: dict) -> None:
+    for side in ("front", "back"):
+        tpl[side]["rows"] = [row for row in tpl[side]["rows"] if row]
+
+
+def remove(tpl: dict, block_id: str) -> dict | None:
+    side, r, c, b = find(tpl, block_id)
+    if b is None:
+        return None
+    del tpl[side]["rows"][r][c]
+    _drop_empty_rows(tpl)
+    return b
+
+
+def move(tpl: dict, block_id: str, target) -> bool:
+    """Move a block to a drop target. Works by inserting a copy at the target
+    and then removing the original object, so no index juggling is needed."""
+    side, r, c, original = find(tpl, block_id)
+    if original is None:
+        return False
+    insert(tpl, dict(original), target)
+    for s in ("front", "back"):
+        for row in tpl[s]["rows"]:
+            row[:] = [b for b in row if b is not original]
+    _drop_empty_rows(tpl)
+    return True
 
 
 def path_for(cards_dir: str) -> str:

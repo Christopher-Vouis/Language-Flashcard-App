@@ -106,13 +106,22 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
   **Card layout...** in the Cards window. Each profile has its own layout.
 - **Blocks** (left): Target word, Reading, Definition, Sentence, Screenshot, Audio button,
   Source (file & time), Divider line and Custom text.
-- **Drag** a block onto the **Front** or **Back** (a blue line shows where it will land), drag blocks to
-  reorder them or move them between sides, and drag one back onto the block list (or click its **✕**)
-  to remove it. Double-clicking a block in the list adds it to the side shown in the preview.
-- The **Preview** (right) shows one of your real cards — **◀ ▶** steps through them, **Front / Back**
-  switches side. Click a block (in the preview or a list) to change its **size, alignment, colour, bold**
-  (and, for the sentence, whether the target word is highlighted; for Custom text, the text itself).
-  The buttons there also move (↑ ↓), duplicate, move to the other side, or remove it.
+- **Drag** blocks from the block list onto the **preview** or the **Front / Back** lists, and drag
+  blocks around in either place (or between sides). Where you drop decides the layout:
+  - at the **top or bottom edge** of a row → a **new row** there (a horizontal blue line shows it);
+  - in the **middle** of a row → **side by side** with that row's blocks, left or right of the one
+    you're pointing at (a vertical blue line shows it). Rows of several blocks are outlined in the lists.
+  Drag a block back onto the block list (or click its **✕**) to remove it. Double-clicking a block in
+  the list adds it on a new row at the bottom of the side shown in the preview.
+- **Preview: ✎ Edit / ▶ Test.** In **Edit**, every block is a handle: press and hold to drag it, click
+  to select it — buttons such as *Play audio* don't press. In **Test**, the card works like study mode:
+  buttons press, **Flip** / **Next card →** step through your cards, and audio plays automatically
+  where switched on. **Front / Back** picks the side and **◀ ▶** the card.
+- Select a block (click it in the preview or a list) to change its **size, alignment, colour, bold**
+  (sentence: highlight the target word or not; Custom text: the text). Its buttons move it
+  **← →** within its row and **↑ ↓** between rows (a block sharing a row is first given a row of its
+  own), duplicate it, send it to the other side, or remove it. Ctrl+arrow keys do the same moves;
+  Delete removes it.
 - **Play audio automatically** can be switched on for either side (e.g. a listening card: audio on the front).
 - **↶ Undo** (Ctrl+Z) undoes any step; **Reset to default layout** brings back the original look;
   **Save** (Ctrl+S) applies it to study mode straight away. Closing with unsaved changes asks first.

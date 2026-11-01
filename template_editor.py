@@ -1,12 +1,22 @@
 """
 Drag-and-drop card layout editor.
 
-Left:    the block palette. Drag a block onto the Front or Back to add it
-         (or double-click it to add it to the side being previewed).
-Middle:  the Front and Back, as stacks of blocks. Drag to reorder, drag
-         between sides, drag back onto the palette (or click ✕) to remove.
-Right:   a live preview using one of your real cards, and the settings of
-         the selected block (size, alignment, colour, ...).
+Left:    the block palette. Drag a block onto the preview or the Front / Back
+         lists to add it (or double-click it to add it to the side shown in
+         the preview).
+Middle:  the Front and Back as rows of blocks (blocks in the same row sit side
+         by side). Drag to reorder, drag between sides, drag back onto the
+         palette (or click ✕) to remove.
+Right:   the preview, with an Edit / Test switch.
+           Edit - blocks are drag handles: press and hold to move them (drop
+                  at a row's top/bottom edge for a new row, or in its middle
+                  to sit beside the other blocks); click to select. Buttons
+                  don't press.
+           Test - the card works like in study mode: buttons press, Flip and
+                  Next card, audio plays automatically if switched on.
+         Below it, the selected block's settings.
+
+Drop targets (see templates.py):  ("row", side, r)  or  ("in", side, r, c)
 """
 
 from __future__ import annotations
@@ -24,6 +34,7 @@ SAMPLE_CARD = {"target_word": "夜", "reading": "よる", "definition": "night; 
                "sentence": "夜に駆ける", "source_file": "example video.mp4", "start": 83.0,
                "audio_clip": "", "screenshot": ""}
 SIDE_LABEL = {"front": "Front", "back": "Back"}
+EDGE = 0.3   # top/bottom share of a row that means "new row" rather than "beside"
 
 
 class TemplateEditor(tk.Toplevel):
@@ -34,10 +45,10 @@ class TemplateEditor(tk.Toplevel):
         self.on_save = on_save
         self.title(f"Card layout  ·  {app.profile['name']}")
         theme.dark_title_bar(self)
-        self.geometry("1300x820")
-        self.minsize(1120, 700)
+        self.geometry("1320x840")
+        self.minsize(1140, 720)
 
-        self.tpl = T.clone(template)
+        self.tpl = T.normalize(template)
         self.saved_json = self._json()
         self.history: list[dict] = []
         self.selected: str = ""             # id of the selected block
@@ -46,7 +57,7 @@ class TemplateEditor(tk.Toplevel):
         self.samples = samples or [SAMPLE_CARD]
         self.sample_i = 0
         self._drag: dict | None = None
-        self.chips: dict[str, list[tk.Frame]] = {"front": [], "back": []}
+        self.list_rows: dict[str, list] = {"front": [], "back": []}   # geometry of the lists
 
         self._style()
         self._build()
@@ -55,8 +66,8 @@ class TemplateEditor(tk.Toplevel):
         self.bind("<Control-z>", lambda e: self.undo())
         self.bind("<Control-s>", lambda e: (self.save(), "break")[1])
         self.bind("<Delete>", self._delete_key)
-        self.bind("<Control-Up>", lambda e: self.move_selected(-1))
-        self.bind("<Control-Down>", lambda e: self.move_selected(1))
+        for key, (dr, dc) in (("Up", (-1, 0)), ("Down", (1, 0)), ("Left", (0, -1)), ("Right", (0, 1))):
+            self.bind(f"<Control-{key}>", lambda e, dr=dr, dc=dc: self.nudge(dr, dc))
 
     # ================================================================ layout
     def _style(self):
@@ -82,28 +93,29 @@ class TemplateEditor(tk.Toplevel):
         body.rowconfigure(0, weight=1)
 
         # ---------------- palette
-        pal = ttk.Frame(body, width=230)
+        pal = ttk.Frame(body)
         pal.grid(row=0, column=0, sticky="ns")
         ttk.Label(pal, text="Blocks", style="Head.TLabel").pack(anchor="w")
-        ttk.Label(pal, text="Drag a block onto the Front or Back.\nDouble-click to add it to the\nside shown in the preview.",
+        ttk.Label(pal, text="Drag a block onto the preview\nor the Front / Back lists.\n"
+                            "Double-click to add it to the\nside shown in the preview.",
                   style="Hint.TLabel", justify="left").pack(anchor="w", pady=(2, 10))
         self.palette = tk.Frame(pal, background=theme.BG)
-        self.palette.pack(fill="y", expand=True, anchor="n")
-        for kind, info in T.BLOCK_TYPES.items():
-            chip = self._make_chip(self.palette, kind, removable=False)
+        self.palette.pack(fill="both", expand=True, anchor="n")
+        for kind in T.BLOCK_TYPES:
+            chip = self._make_chip(self.palette, kind)
             chip.pack(fill="x", pady=3)
             self._bind_drag(chip, ("palette", kind))
             for w in self._chip_widgets(chip):
-                w.bind("<Double-1>", lambda e, k=kind: self.add_block(k, self.preview_side), add="+")
+                w.bind("<Double-1>", lambda e, k=kind: self.add_block(
+                    k, ("row", self.preview_side, len(self.tpl[self.preview_side]["rows"]))), add="+")
         self.trash_hint = ttk.Label(pal, text="Drop a block here to remove it", style="Hint.TLabel")
         self.trash_hint.pack(anchor="w", pady=(8, 0))
 
-        # ---------------- front / back stacks
-        sides = ttk.Frame(body, width=330)
+        # ---------------- front / back lists
+        sides = ttk.Frame(body)
         sides.grid(row=0, column=1, sticky="ns", padx=(18, 18))
         self.side_box: dict[str, tk.Frame] = {}
         self.autoplay_vars: dict[str, tk.BooleanVar] = {}
-        self.empty_labels: dict[str, tk.Label] = {}
         for side in ("front", "back"):
             head = ttk.Frame(sides)
             head.pack(fill="x", pady=(0 if side == "front" else 14, 4))
@@ -113,15 +125,13 @@ class TemplateEditor(tk.Toplevel):
             ttk.Checkbutton(head, text="Play audio automatically", variable=var,
                             command=lambda s=side: self._set_autoplay(s)).pack(side="right")
             box = tk.Frame(sides, background=theme.SURFACE, highlightthickness=1,
-                           highlightbackground=theme.BORDER, width=320, height=250)
+                           highlightbackground=theme.BORDER, width=340, height=270)
             box.pack(fill="both", expand=True)
             box.pack_propagate(False)
             box.bind("<Button-1>", lambda e, s=side: self.show_preview_side(s))
             self.side_box[side] = box
-            self.empty_labels[side] = tk.Label(
-                box, text="Drag blocks here", background=theme.SURFACE, foreground=theme.SUBTLE,
-                font=("Segoe UI", 11, "italic"))
-        self.indicator = tk.Frame(self, background=theme.ACCENT, height=3)
+        ttk.Label(sides, text="Blocks in one row sit side by side.", style="Hint.TLabel").pack(anchor="w", pady=(6, 0))
+        self.indicator = tk.Frame(self, background=theme.ACCENT)
 
         # ---------------- preview + settings
         right = ttk.Frame(body)
@@ -138,24 +148,35 @@ class TemplateEditor(tk.Toplevel):
                             style="Seg.Toolbutton",
                             command=lambda: self.show_preview_side(self.side_var.get())
                             ).pack(side="left", padx=(10 if side == "front" else 0, 0))
+        self.mode_var = tk.StringVar(value="edit")
+        for value, text in (("edit", "✎  Edit"), ("test", "▶  Test")):
+            ttk.Radiobutton(bar, text=text, value=value, variable=self.mode_var, style="Seg.Toolbutton",
+                            command=self._mode_changed).pack(side="left", padx=(16 if value == "edit" else 0, 0))
         nav = ttk.Frame(bar)
         nav.pack(side="right")
         ttk.Button(nav, text="◀", width=3, command=lambda: self._step_sample(-1)).pack(side="left")
         self.sample_var = tk.StringVar()
-        ttk.Label(nav, textvariable=self.sample_var, foreground=theme.MUTED, width=18,
+        ttk.Label(nav, textvariable=self.sample_var, foreground=theme.MUTED, width=16,
                   anchor="center").pack(side="left", padx=4)
         ttk.Button(nav, text="▶", width=3, command=lambda: self._step_sample(1)).pack(side="left")
 
-        frame = tk.Frame(right, background=theme.BG, highlightthickness=1,
-                         highlightbackground=theme.BORDER)
-        frame.grid(row=1, column=0, sticky="nsew", pady=(8, 8))
-        self.preview = CardView(frame, scale=0.72, on_select=self.select)
+        self.preview_frame = tk.Frame(right, background=theme.BG, highlightthickness=1,
+                                      highlightbackground=theme.BORDER)
+        self.preview_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 4))
+        self.preview = CardView(self.preview_frame, scale=0.72, mode="edit", drag=self)
         self.preview.pack(fill="both", expand=True, padx=12, pady=8)
-        ttk.Label(right, text="Click a block in the preview or in the Front/Back lists to change how it looks.",
-                  style="Hint.TLabel").grid(row=2, column=0, sticky="w")
 
+        # test-mode controls (shown only in Test)
+        self.test_bar = ttk.Frame(right)
+        self.test_btn = ttk.Button(self.test_bar, text="Flip", width=16, command=self._test_advance)
+        self.test_btn.pack(side="left")
+        ttk.Label(self.test_bar, text="Testing: buttons work and audio plays as in study mode.",
+                  style="Hint.TLabel").pack(side="left", padx=12)
+
+        self.hint_var = tk.StringVar()
+        ttk.Label(right, textvariable=self.hint_var, style="Hint.TLabel").grid(row=3, column=0, sticky="w")
         self.props = ttk.Frame(right, padding=(0, 8, 0, 0))
-        self.props.grid(row=3, column=0, sticky="ew")
+        self.props.grid(row=4, column=0, sticky="ew")
 
         # ---------------- bottom bar
         bottom = ttk.Frame(self, padding=(14, 6, 14, 12))
@@ -169,19 +190,22 @@ class TemplateEditor(tk.Toplevel):
         ttk.Button(bottom, text="Close", command=self.close).pack(side="right", padx=6)
 
     # ---------------------------------------------------------------- chips
-    def _make_chip(self, parent, kind: str, removable: bool, block_id: str = "") -> tk.Frame:
+    def _make_chip(self, parent, kind: str, block_id: str = "", compact: bool = False) -> tk.Frame:
         info = T.BLOCK_TYPES[kind]
         chip = tk.Frame(parent, background=theme.RAISED, highlightthickness=1,
                         highlightbackground=theme.BORDER, cursor="fleur")
-        tk.Label(chip, text="⠿", background=theme.RAISED, foreground=theme.SUBTLE,
-                 font=("Segoe UI", 11)).pack(side="left", padx=(6, 2), pady=5)
+        if not compact:
+            tk.Label(chip, text="⠿", background=theme.RAISED, foreground=theme.SUBTLE,
+                     font=("Segoe UI", 11)).pack(side="left", padx=(6, 2), pady=5)
         tk.Label(chip, text=info["icon"], background=theme.RAISED, foreground=theme.ACCENT,
-                 font=("Segoe UI", 11, "bold"), width=2).pack(side="left")
+                 font=("Segoe UI", 11, "bold"), width=2).pack(side="left", padx=(4 if compact else 0, 0), pady=5)
         tk.Label(chip, text=info["label"], background=theme.RAISED, foreground=theme.FG,
-                 font=("Segoe UI", 10), anchor="w").pack(side="left", fill="x", expand=True, padx=(4, 4))
-        if removable:
+                 font=("Segoe UI", 10), anchor="w", width=1 if compact else 0
+                 ).pack(side="left", fill="x", expand=True, padx=(4, 2))
+        chip.remove_label = None
+        if block_id:
             x = tk.Label(chip, text="✕", background=theme.RAISED, foreground=theme.MUTED,
-                         font=("Segoe UI", 10), cursor="hand2", padx=8)
+                         font=("Segoe UI", 10), cursor="hand2", padx=6)
             x.pack(side="right")
             x.bind("<Button-1>", lambda e, bid=block_id: (self.remove_block(bid), "break")[1])
             chip.remove_label = x
@@ -208,74 +232,82 @@ class TemplateEditor(tk.Toplevel):
         self._paint_chip(chip, theme.RAISED_HOVER if inside else theme.RAISED,
                          theme.ACCENT if selected else theme.BORDER)
 
-    def _refresh_sides(self):
+    def _refresh_lists(self):
         for side in ("front", "back"):
-            for chip in self.chips[side]:
-                chip.destroy()
-            self.chips[side] = []
             box = self.side_box[side]
-            blocks = self.tpl[side]["blocks"]
-            if not blocks:
-                self.empty_labels[side].pack(expand=True)
-            else:
-                self.empty_labels[side].pack_forget()
-            for b in blocks:
-                chip = self._make_chip(box, b["type"], removable=True, block_id=b["id"])
-                chip.pack(fill="x", padx=6, pady=(6, 0))
-                self._bind_drag(chip, ("side", side, b["id"]))
-                if b["id"] == self.selected:
-                    self._paint_chip(chip, theme.RAISED, theme.ACCENT)
-                self.chips[side].append(chip)
+            for w in box.winfo_children():
+                w.destroy()
+            self.list_rows[side] = []
+            rows = self.tpl[side]["rows"]
+            if not rows:
+                tk.Label(box, text="Drag blocks here", background=theme.SURFACE, foreground=theme.SUBTLE,
+                         font=("Segoe UI", 11, "italic")).pack(expand=True)
+            for row in rows:
+                multi = len(row) > 1
+                rf = tk.Frame(box, background=theme.SURFACE, highlightthickness=1 if multi else 0,
+                              highlightbackground=theme.BORDER)
+                rf.pack(fill="x", padx=6, pady=(6, 0))
+                items = []
+                for b in row:
+                    chip = self._make_chip(rf, b["type"], block_id=b["id"], compact=multi)
+                    chip.pack(side="left", fill="x", expand=True, padx=2 if multi else 0, pady=2 if multi else 0)
+                    self._bind_drag(chip, ("block", b["id"]))
+                    if b["id"] == self.selected:
+                        self._paint_chip(chip, theme.RAISED, theme.ACCENT)
+                    items.append((b["id"], chip))
+                self.list_rows[side].append((rf, items))
             self.autoplay_vars[side].set(self.tpl[side]["autoplay"])
 
     # ============================================================ drag & drop
+    # The preview's CardView calls press/motion/release directly (with a block id).
     def _bind_drag(self, chip, source):
         for w in self._chip_widgets(chip):
-            if getattr(chip, "remove_label", None) is w:
+            if w is chip.remove_label:
                 continue  # the ✕ is a button, not a drag handle
-            w.bind("<ButtonPress-1>", lambda e, s=source: self._press(e, s))
-            w.bind("<B1-Motion>", self._motion)
-            w.bind("<ButtonRelease-1>", self._release)
+            w.bind("<ButtonPress-1>", lambda e, s=source: self.press(e, s))
+            w.bind("<B1-Motion>", self.motion)
+            w.bind("<ButtonRelease-1>", self.release)
 
-    def _press(self, e, source):
+    def press(self, e, source):
+        if isinstance(source, str):          # from the preview: a block id
+            source = ("block", source)
         self._drag = {"src": source, "x": e.x_root, "y": e.y_root, "ghost": None}
 
-    def _motion(self, e):
+    def motion(self, e):
         d = self._drag
         if not d:
             return
         if d["ghost"] is None:
             if abs(e.x_root - d["x"]) + abs(e.y_root - d["y"]) < 6:
                 return  # still a click, not a drag
-            kind = d["src"][1] if d["src"][0] == "palette" else self._find(d["src"][2])[2]["type"]
+            kind = d["src"][1] if d["src"][0] == "palette" else T.find(self.tpl, d["src"][1])[3]["type"]
             d["ghost"] = self._make_ghost(kind)
         d["ghost"].geometry(f"+{e.x_root + 14}+{e.y_root + 8}")
-        target = self._drop_target(e.x_root, e.y_root)
-        self._show_indicator(target)
-        over_palette = target is None and d["src"][0] == "side" and self._over(self.palette, e)
-        self.trash_hint.configure(foreground=theme.TARGET if over_palette else theme.SUBTLE)
+        target, ind = self._drop_target(e.x_root, e.y_root)
+        self._show_indicator(ind)
+        trash = target is None and d["src"][0] == "block" and self._over(self.palette, e.x_root, e.y_root)
+        self.trash_hint.configure(foreground=theme.TARGET if trash else theme.SUBTLE)
 
-    def _release(self, e):
+    def release(self, e):
         d, self._drag = self._drag, None
         self.indicator.place_forget()
         self.trash_hint.configure(foreground=theme.SUBTLE)
         if not d:
             return
-        if d["ghost"] is None:  # a click
-            if d["src"][0] == "side":
-                self.select(d["src"][2])
+        src = d["src"]
+        if d["ghost"] is None:  # a click, not a drag
+            if src[0] == "block":
+                self.select(src[1])
             return
         d["ghost"].destroy()
-        target = self._drop_target(e.x_root, e.y_root)
-        src = d["src"]
+        target, _ = self._drop_target(e.x_root, e.y_root)
         if target:
-            side, index = target
             if src[0] == "palette":
-                self.add_block(src[1], side, index)
+                self.add_block(src[1], target)
             else:
-                self.move_block(src[2], side, index)
-        elif src[0] == "side" and self._over(self.palette, e):
-            self.remove_block(src[2])
+                self.move_block(src[1], target)
+        elif src[0] == "block" and self._over(self.palette, e.x_root, e.y_root):
+            self.remove_block(src[1])
 
     def _make_ghost(self, kind: str) -> tk.Toplevel:
         g = tk.Toplevel(self)
@@ -291,35 +323,58 @@ class TemplateEditor(tk.Toplevel):
         return g
 
     @staticmethod
-    def _over(widget, e) -> bool:
+    def _over(widget, xr, yr, margin: int = 0) -> bool:
         x, y = widget.winfo_rootx(), widget.winfo_rooty()
-        return x <= e.x_root <= x + widget.winfo_width() and y <= e.y_root <= y + widget.winfo_height()
+        return (x - margin <= xr <= x + widget.winfo_width() + margin
+                and y - margin <= yr <= y + widget.winfo_height() + margin)
 
     def _drop_target(self, xr: int, yr: int):
-        """(side, index) under the pointer, or None."""
+        """(target, indicator) for the pointer position, or (None, None)."""
+        if self.mode_var.get() == "edit" and self._over(self.preview_frame, xr, yr):
+            return self._target_in(self.preview, self.preview_side, self.preview.rows, xr, yr)
         for side, box in self.side_box.items():
-            x, y = box.winfo_rootx(), box.winfo_rooty()
-            if x - 20 <= xr <= x + box.winfo_width() + 20 and y - 10 <= yr <= y + box.winfo_height() + 10:
-                index = 0
-                for chip in self.chips[side]:
-                    if yr > chip.winfo_rooty() + chip.winfo_height() / 2:
-                        index += 1
-                return side, index
-        return None
+            if self._over(box, xr, yr, margin=12):
+                return self._target_in(box, side, self.list_rows[side], xr, yr)
+        return None, None
 
-    def _show_indicator(self, target):
-        if not target:
+    @staticmethod
+    def _target_in(surface, side: str, rows, xr: int, yr: int):
+        """Work out where a drop lands on a surface whose rows are
+        [(row_frame, [(block_id, widget), ...]), ...]."""
+        stop = surface.winfo_rooty()
+        if not rows:
+            return ("row", side, 0), ("h", surface, 8)
+        for r, (rf, items) in enumerate(rows):
+            top = rf.winfo_rooty()
+            h = max(rf.winfo_height(), 1)
+            bottom = top + h
+            if yr < top:                                   # in the gap above this row
+                return ("row", side, r), ("h", surface, top - stop - 3)
+            if yr <= bottom:
+                edge = h * EDGE
+                if yr < top + edge:                        # top edge: new row above
+                    return ("row", side, r), ("h", surface, top - stop - 3)
+                if yr > bottom - edge:                     # bottom edge: new row below
+                    return ("row", side, r + 1), ("h", surface, bottom - stop + 1)
+                c = sum(1 for _, w in items if xr > w.winfo_rootx() + w.winfo_width() / 2)
+                if c < len(items):                         # middle: beside, in this row
+                    x = items[c][1].winfo_rootx() - rf.winfo_rootx() - 3
+                else:
+                    last = items[-1][1]
+                    x = last.winfo_rootx() - rf.winfo_rootx() + last.winfo_width()
+                return ("in", side, r, c), ("v", rf, x)
+        last_rf = rows[-1][0]
+        return ("row", side, len(rows)), ("h", surface, last_rf.winfo_rooty() + last_rf.winfo_height() - stop + 2)
+
+    def _show_indicator(self, ind):
+        if not ind:
             self.indicator.place_forget()
             return
-        side, index = target
-        box, chips = self.side_box[side], self.chips[side]
-        if not chips:
-            y = 8
-        elif index < len(chips):
-            y = chips[index].winfo_y() - 4
-        else:
-            y = chips[-1].winfo_y() + chips[-1].winfo_height() + 2
-        self.indicator.place(in_=box, x=6, y=max(y, 1), relwidth=1.0, width=-12)
+        kind, widget, pos = ind
+        if kind == "h":   # a new row here
+            self.indicator.place(in_=widget, x=4, y=max(int(pos), 0), relwidth=1.0, width=-8, height=3)
+        else:             # beside, in this row
+            self.indicator.place(in_=widget, x=max(int(pos), 0), y=0, width=3, relheight=1.0)
         self.indicator.lift()
 
     # ============================================================== editing
@@ -330,75 +385,76 @@ class TemplateEditor(tk.Toplevel):
         self.history.append(T.clone(self.tpl))
         del self.history[:-60]
 
-    def _find(self, block_id: str):
-        for side in ("front", "back"):
-            for i, b in enumerate(self.tpl[side]["blocks"]):
-                if b["id"] == block_id:
-                    return side, i, b
-        return None, -1, None
-
-    def add_block(self, kind: str, side: str, index: int | None = None):
+    def add_block(self, kind: str, target):
         self._push()
         block = T.new_block(kind)
-        blocks = self.tpl[side]["blocks"]
-        blocks.insert(len(blocks) if index is None else index, block)
+        T.insert(self.tpl, block, target)
         self.selected = block["id"]
-        self.preview_side = side
+        self.preview_side = target[1]
         self._refresh_all()
 
-    def move_block(self, block_id: str, side: str, index: int):
-        old_side, old_i, block = self._find(block_id)
-        if block is None:
-            return
-        if old_side == side and index in (old_i, old_i + 1):
-            self.select(block_id)  # dropped where it already was
-            return
+    def move_block(self, block_id: str, target):
+        before = self._json()
         self._push()
-        del self.tpl[old_side]["blocks"][old_i]
-        if old_side == side and index > old_i:
-            index -= 1
-        self.tpl[side]["blocks"].insert(index, block)
+        T.move(self.tpl, block_id, target)
+        if self._json() == before:
+            self.history.pop()  # dropped where it already was
         self.selected = block_id
-        self.preview_side = side
+        self.preview_side = target[1]
         self._refresh_all()
 
     def remove_block(self, block_id: str):
-        side, i, block = self._find(block_id)
-        if block is None:
+        side = T.find(self.tpl, block_id)[0]
+        if side is None:
             return
         self._push()
-        del self.tpl[side]["blocks"][i]
+        T.remove(self.tpl, block_id)
         if self.selected == block_id:
             self.selected = ""
         self.preview_side = side
         self._refresh_all()
 
-    def move_selected(self, delta: int):
-        side, i, block = self._find(self.selected)
+    def nudge(self, dr: int, dc: int):
+        """Keyboard / button moves for the selected block.
+        ← →  move within its row.   ↑ ↓  move to the row above / below; a block
+        that shares its row is first taken out onto a row of its own."""
+        side, r, c, block = T.find(self.tpl, self.selected)
         if block is None:
-            return
-        j = i + delta
-        if 0 <= j < len(self.tpl[side]["blocks"]):
-            self.move_block(block["id"], side, j if delta < 0 else j + 1)
+            return "break"
+        row = self.tpl[side]["rows"][r]
+        n_rows = len(self.tpl[side]["rows"])
+        target = None
+        if dc < 0 and c > 0:
+            target = ("in", side, r, c - 1)
+        elif dc > 0 and c < len(row) - 1:
+            target = ("in", side, r, c + 2)
+        elif dr < 0:
+            target = ("row", side, r) if len(row) > 1 else (("row", side, r - 1) if r > 0 else None)
+        elif dr > 0:
+            target = ("row", side, r + 1) if len(row) > 1 else (("row", side, r + 2) if r < n_rows - 1 else None)
+        if target:
+            self.move_block(block["id"], target)
+        return "break"
 
     def move_selected_to_other_side(self):
-        side, i, block = self._find(self.selected)
+        side, r, c, block = T.find(self.tpl, self.selected)
         if block is not None:
             other = "back" if side == "front" else "front"
-            self.move_block(block["id"], other, len(self.tpl[other]["blocks"]))
+            self.move_block(block["id"], ("row", other, len(self.tpl[other]["rows"])))
 
     def duplicate_selected(self):
-        side, i, block = self._find(self.selected)
+        side, r, c, block = T.find(self.tpl, self.selected)
         if block is None:
             return
         self._push()
         copy = dict(block, id=T.new_block(block["type"])["id"])
-        self.tpl[side]["blocks"].insert(i + 1, copy)
+        T.insert(self.tpl, copy, ("row", side, r + 1))
         self.selected = copy["id"]
         self._refresh_all()
 
     def _delete_key(self, e):
-        if isinstance(e.widget, (tk.Entry, ttk.Entry, tk.Text)):
+        if isinstance(e.widget, (tk.Entry, ttk.Entry, tk.Text)) and e.widget.winfo_toplevel() is self \
+                and str(e.widget.cget("state")) == "normal":
             return None  # deleting text in the Custom text box
         if self.selected:
             self.remove_block(self.selected)
@@ -410,7 +466,7 @@ class TemplateEditor(tk.Toplevel):
         self._update_status()
 
     def set_prop(self, key: str, value):
-        side, i, block = self._find(self.selected)
+        block = T.find(self.tpl, self.selected)[3]
         if block is None or block.get(key) == value:
             return
         self._push()
@@ -422,7 +478,7 @@ class TemplateEditor(tk.Toplevel):
         if not self.history:
             return
         self.tpl = self.history.pop()
-        if not self._find(self.selected)[2]:
+        if T.find(self.tpl, self.selected)[3] is None:
             self.selected = ""
         self._refresh_all()
 
@@ -437,8 +493,8 @@ class TemplateEditor(tk.Toplevel):
 
     # ============================================================ selection
     def select(self, block_id: str):
-        side, i, block = self._find(block_id)
-        if block is None:
+        side = T.find(self.tpl, block_id)[0]
+        if side is None:
             return
         self.selected = block_id
         self.preview_side = side
@@ -451,24 +507,63 @@ class TemplateEditor(tk.Toplevel):
 
     def _step_sample(self, delta: int):
         self.sample_i = (self.sample_i + delta) % len(self.samples)
-        self._refresh_preview()
+        if self.mode_var.get() == "test":
+            self.preview_side = "front"
+            self.side_var.set("front")
+            self._refresh_preview(autoplay=True)
+        else:
+            self._refresh_preview()
+
+    # ============================================================ test mode
+    def _mode_changed(self):
+        stop_wav()
+        if self.mode_var.get() == "test":
+            self.preview_side = "front"
+            self.side_var.set("front")
+            self.test_bar.grid(row=2, column=0, sticky="w", pady=(0, 6))
+            self._refresh_preview(autoplay=True)
+        else:
+            self.test_bar.grid_forget()
+            self._refresh_preview()
+        self._refresh_props()
+
+    def _test_advance(self):
+        """Test mode's Flip / Next card button, like study mode."""
+        stop_wav()
+        if self.preview_side == "front":
+            self.preview_side = "back"
+        else:
+            self.preview_side = "front"
+            self.sample_i = (self.sample_i + 1) % len(self.samples)
+        self.side_var.set(self.preview_side)
+        self._refresh_preview(autoplay=True)
 
     # ============================================================ refreshing
     def _refresh_all(self):
         self.side_var.set(self.preview_side)
-        self._refresh_sides()
+        self._refresh_lists()
         self._refresh_preview()
         self._refresh_props()
         self._update_status()
 
-    def _refresh_preview(self):
+    def _refresh_preview(self, autoplay: bool = False):
         card = self.samples[self.sample_i]
         real = card is not SAMPLE_CARD
+        testing = self.mode_var.get() == "test"
         self.sample_var.set(f"card {self.sample_i + 1} of {len(self.samples)}" if real else "example card")
-        self.preview.show(card, self.tpl[self.preview_side],
-                          self.cards.abs_path if real else (lambda rel: ""),
-                          selected=self.selected,
+        self.preview.mode = "test" if testing else "edit"
+        side = self.tpl[self.preview_side]
+        self.preview.show(card, side, self.cards.abs_path if real else (lambda rel: ""),
+                          selected="" if testing else self.selected,
                           empty_text=f"The {self.preview_side} is empty.\nDrag blocks onto it from the left.")
+        if testing:
+            self.test_btn.configure(text="Flip" if self.preview_side == "front" else "Next card  →")
+            self.hint_var.set("")
+            if autoplay and side.get("autoplay"):
+                self.preview.play()
+        else:
+            self.hint_var.set("Edit: press and hold a block to drag it — drop at a row's top or bottom edge "
+                              "for a new row, or in its middle to place it side by side. Click to select.")
 
     def _update_status(self):
         dirty = self._json() != self.saved_json
@@ -478,20 +573,28 @@ class TemplateEditor(tk.Toplevel):
     def _refresh_props(self):
         for w in self.props.winfo_children():
             w.destroy()
-        side, i, block = self._find(self.selected)
+        if self.mode_var.get() == "test":
+            ttk.Label(self.props, text="Switch the preview to ✎ Edit to change the layout.",
+                      foreground=theme.MUTED).pack(anchor="w")
+            return
+        side, r, c, block = T.find(self.tpl, self.selected)
         if block is None:
-            ttk.Label(self.props, text="No block selected.", foreground=theme.MUTED).pack(anchor="w")
+            ttk.Label(self.props, text="No block selected — click one to change how it looks.",
+                      foreground=theme.MUTED).pack(anchor="w")
             return
         info = T.BLOCK_TYPES[block["type"]]
+        row_len = len(self.tpl[side]["rows"][r])
         head = ttk.Frame(self.props)
         head.pack(fill="x", pady=(0, 6))
         ttk.Label(head, text=f"{info['icon']}  {info['label']}", style="Head.TLabel").pack(side="left")
-        ttk.Label(head, text=f"on the {SIDE_LABEL[side].lower()}", foreground=theme.MUTED).pack(side="left", padx=8)
+        where = f"on the {SIDE_LABEL[side].lower()}, row {r + 1}" + \
+                (f", {c + 1} of {row_len} side by side" if row_len > 1 else "")
+        ttk.Label(head, text=where, foreground=theme.MUTED).pack(side="left", padx=8)
         for text, cmd in (("✕  Remove", lambda: self.remove_block(block["id"])),
                           ("⧉  Duplicate", self.duplicate_selected),
-                          (f"⇄  Move to {('back' if side == 'front' else 'front')}",
-                           self.move_selected_to_other_side),
-                          ("↓", lambda: self.move_selected(1)), ("↑", lambda: self.move_selected(-1))):
+                          (f"⇄  To {('back' if side == 'front' else 'front')}", self.move_selected_to_other_side),
+                          ("→", lambda: self.nudge(0, 1)), ("←", lambda: self.nudge(0, -1)),
+                          ("↓", lambda: self.nudge(1, 0)), ("↑", lambda: self.nudge(-1, 0))):
             ttk.Button(head, text=text, command=cmd, width=3 if len(text) == 1 else 0).pack(side="right", padx=(4, 0))
 
         grid = ttk.Frame(self.props)

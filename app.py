@@ -823,7 +823,7 @@ class StudyScreen(ttk.Frame):
                        "to this one (Saved lines → New card, or Add to deck in the Cards window).")
             else:
                 msg = "No cards yet.\n\nCreate cards from Saved lines → New card, then come back here."
-            self.view.show(None, {"blocks": []}, self._abs, empty_text=msg)
+            self.view.show(None, {"rows": []}, self._abs, empty_text=msg)
             self.action_btn.config(text="Flip", state="disabled")
             return
         self.view.show(c, tpl["front"], self._abs, empty_text="(The front of this card layout is empty.)")
@@ -846,7 +846,7 @@ class StudyScreen(ttk.Frame):
         """R key: play the clip if the visible side shows or autoplays audio
         (so a front without audio doesn't give the answer away)."""
         side = self.app.template["back" if self.flipped else "front"]
-        if side.get("autoplay") or any(b["type"] == "audio" for b in side["blocks"]):
+        if side.get("autoplay") or any(b["type"] == "audio" for b in templates.blocks(side)):
             self.view.play()
 
     def redraw(self):
