@@ -17,6 +17,9 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import media
+import templates
+from audio import play_wav, stop_wav
+from card_view import CardView
 import subtitles
 import theme
 import transcriber as tr
@@ -29,10 +32,6 @@ try:
 except ImportError:  # screenshots won't display until setup.bat is re-run
     Image = ImageTk = None
 
-try:
-    import winsound
-except ImportError:  # not Windows
-    winsound = None
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(APP_DIR, "output")
@@ -43,19 +42,6 @@ MEDIA_TYPES = [
                       "*.mp4 *.mkv *.mov *.avi *.webm *.wmv *.m4v *.flv"),
     ("All files", "*.*"),
 ]
-
-
-# ---------------------------------------------------------------- audio
-def play_wav(path: str) -> bool:
-    if not path or winsound is None or not os.path.isfile(path):
-        return False
-    winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
-    return True
-
-
-def stop_wav() -> None:
-    if winsound is not None:
-        winsound.PlaySound(None, 0)
 
 
 class TextPrompt(tk.Toplevel):
@@ -667,6 +653,7 @@ class CardsWindow(RecordWindow):
 
     def add_actions(self, bar, menu):
         ttk.Button(bar, text="Study cards", command=self.app.show_study).pack(side="left", padx=(0, 6))
+        ttk.Button(bar, text="Card layout...", command=self.app.edit_template).pack(side="left", padx=(0, 6))
         ttk.Button(bar, text="✎  Edit card...", command=self.edit_card).pack(side="left")
         self.deck_menu = tk.Menu(self, tearoff=False, postcommand=self._fill_deck_menu)
         self.add_deck_btn = ttk.Button(bar, text="Add to deck  ▾", command=self._popup_deck_menu)
@@ -738,9 +725,9 @@ class CardsWindow(RecordWindow):
 
 # ------------------------------------------------------------ study mode
 class StudyScreen(ttk.Frame):
-    """Go through the cards one at a time: front (word + sentence) → flip →
-    back (reading, definition, screenshot, audio) → next card. A finished
-    card goes to the bottom of the stack. Shown inside the main window;
+    """Go through the cards one at a time: front → flip → back → next card,
+    each side drawn from the profile's card template. A finished card goes
+    to the bottom of the stack. Shown inside the main window;
     its keys (Space/Enter/R/Esc) are routed here by App._study_key."""
 
     def __init__(self, parent, app: "App"):
@@ -750,53 +737,18 @@ class StudyScreen(ttk.Frame):
         self.deck: list[str] = [c["id"] for c in app.cards.cards_in(self.deck_id)]  # top of stack = deck[0]
         self.reviewed = 0
         self.flipped = False
-        self._photo = None
-        self._image = None
-        self._audio = ""
-
         self.progress_var = tk.StringVar()
         head = ttk.Frame(self, padding=(12, 10, 12, 0))
         head.pack(fill="x")
         ttk.Button(head, text="←  Main menu", command=app.show_home,
                    takefocus=False).pack(side="left")
         ttk.Label(head, textvariable=self.progress_var, foreground=theme.MUTED).pack(side="left", padx=12)
+        ttk.Button(head, text="✎  Edit card layout", command=app.edit_template,
+                   takefocus=False).pack(side="right")
 
-        card = ttk.Frame(self, padding=(24, 8, 24, 8))
-        card.pack(fill="both", expand=True)
-        self.card_frame = card
-
-        # ---- front
-        self.word_var = tk.StringVar()
-        ttk.Label(card, textvariable=self.word_var, font=("Segoe UI", 34, "bold"),
-                  anchor="center").pack(fill="x", pady=(16, 8))
-        self.sentence = tk.Text(card, height=3, wrap="word", font=("Segoe UI", 17),
-                                relief="flat", borderwidth=0, highlightthickness=0,
-                                background=app.cget("background"), cursor="arrow",
-                                takefocus=False)
-        self.sentence.tag_configure("center", justify="center")
-        self.sentence.tag_configure("target", foreground=theme.TARGET, font=("Segoe UI", 17, "bold"))
-        self.sentence.pack(fill="x")
-
-        # ---- back (hidden until flipped)
-        self.back = ttk.Frame(card)
-        theme.separator(self.back, pady=12)
-        self.reading_var = tk.StringVar()
-        self.def_var = tk.StringVar()
-        ttk.Label(self.back, textvariable=self.reading_var, font=("Segoe UI", 15),
-                  foreground=theme.MUTED, anchor="center").pack(fill="x")
-        self.def_label = ttk.Label(self.back, textvariable=self.def_var, font=("Segoe UI", 14),
-                                   justify="center", anchor="center", wraplength=700)
-        self.def_label.pack(fill="x", pady=(6, 10))
-        holder = tk.Frame(self.back, bg=theme.IMAGE_BG, width=640, height=330)
-        holder.pack(fill="both", expand=True)
-        holder.pack_propagate(False)
-        self.image_label = tk.Label(holder, bg=theme.IMAGE_BG, fg=theme.MUTED, font=("Segoe UI", 10))
-        self.image_label.pack(fill="both", expand=True)
-        self.image_label.bind("<Configure>", lambda e: self._render())
-        self.replay_btn = ttk.Button(self.back, text="▶  Replay audio", command=self.replay,
-                                     takefocus=False)
-        self.replay_btn.pack(pady=(8, 0))
-        card.bind("<Configure>", lambda e: self.def_label.configure(wraplength=max(e.width - 60, 300)))
+        # the card itself, drawn from the profile's card template (templates.py)
+        self.view = CardView(self)
+        self.view.pack(fill="both", expand=True, padx=24, pady=8)
 
         # ---- action button
         bottom = ttk.Frame(self, padding=(12, 4, 12, 14))
@@ -808,7 +760,7 @@ class StudyScreen(ttk.Frame):
         self.action_btn.pack()
         ttk.Label(bottom, text="Space / Enter: flip or next  ·  R: replay audio  ·  Esc: main menu",
                   foreground=theme.SUBTLE).pack(pady=(6, 0))
-        self.show_front()
+        self.show_front(autoplay=False)
 
     # --- deck handling
     def sync(self):
@@ -826,7 +778,7 @@ class StudyScreen(ttk.Frame):
         self.deck += [c["id"] for c in in_deck if c["id"] not in self.deck]
         current = self.current()
         if current is None or not self.flipped:
-            self.show_front()
+            self.show_front(autoplay=False)
         else:
             self.show_back(autoplay=False)
 
@@ -856,85 +808,53 @@ class StudyScreen(ttk.Frame):
                               f"{n} card{'s' if n != 1 else ''}  ·  "
                               f"{self.reviewed} reviewed this session")
 
-    def show_front(self):
+    def _abs(self, rel: str) -> str:
+        return self.app.cards.abs_path(rel)
+
+    def show_front(self, autoplay: bool = True):
         stop_wav()
         self.flipped = False
-        self.back.pack_forget()
         c = self.current()
         self._update_progress()
+        tpl = self.app.template
         if c is None:
             if self.app.cards.cards and self.deck_id != ALL:
-                self.word_var.set("This deck is empty")
-                self._set_sentence("Choose another deck on the main menu, or add cards to this one "
-                                   "(Saved lines → New card, or Edit card in the Cards window).", "")
+                msg = ("This deck is empty.\n\nChoose another deck on the main menu, or add cards "
+                       "to this one (Saved lines → New card, or Add to deck in the Cards window).")
             else:
-                self.word_var.set("No cards yet")
-                self._set_sentence("Create cards from Saved lines → New card, then come back here.", "")
+                msg = "No cards yet.\n\nCreate cards from Saved lines → New card, then come back here."
+            self.view.show(None, {"blocks": []}, self._abs, empty_text=msg)
             self.action_btn.config(text="Flip", state="disabled")
             return
-        self.word_var.set(c["target_word"])
-        self._set_sentence(c["sentence"], c["target_word"])
+        self.view.show(c, tpl["front"], self._abs, empty_text="(The front of this card layout is empty.)")
         self.action_btn.config(text="Flip", state="normal")
+        if autoplay and tpl["front"].get("autoplay"):
+            self.view.play()
 
     def show_back(self, autoplay: bool = True):
         c = self.current()
         if c is None:
             return
         self.flipped = True
-        self.reading_var.set(c.get("reading", ""))
-        self.def_var.set(c.get("definition", ""))
-        self._audio = self.app.cards.abs_path(c.get("audio_clip", ""))
-        self.replay_btn.config(state="normal" if os.path.isfile(self._audio) else "disabled")
-        self._load_image(self.app.cards.abs_path(c.get("screenshot", "")))
-        self.back.pack(fill="both", expand=True)
+        tpl = self.app.template
+        self.view.show(c, tpl["back"], self._abs, empty_text="(The back of this card layout is empty.)")
         self.action_btn.config(text="Next card  →", state="normal")
-        if autoplay:
-            self.replay()
-
-    def _set_sentence(self, text: str, target: str):
-        s = self.sentence
-        s.config(state="normal")
-        s.delete("1.0", "end")
-        s.insert("1.0", text, "center")
-        if target:  # highlight every occurrence of the target word
-            start = "1.0"
-            while True:
-                pos = s.search(target, start, stopindex="end", nocase=True)
-                if not pos:
-                    break
-                end = f"{pos}+{len(target)}c"
-                s.tag_add("target", pos, end)
-                start = end
-        s.config(state="disabled")
-
-    def _load_image(self, path: str):
-        self._image = self._photo = None
-        if path and os.path.isfile(path) and Image is not None:
-            try:
-                with Image.open(path) as im:
-                    self._image = im.copy()
-                self._render()
-                return
-            except OSError:
-                pass
-        msg = ("Run setup.bat once more to enable screenshots (installs Pillow)."
-               if path and Image is None else ("♪  Audio only" if os.path.isfile(self._audio)
-                                                else "No screenshot"))
-        self.image_label.config(image="", text=msg)
-
-    def _render(self):
-        if self._image is None:
-            return
-        w = max(self.image_label.winfo_width() - 4, 50)
-        h = max(self.image_label.winfo_height() - 4, 50)
-        img = self._image.copy()
-        img.thumbnail((w, h))
-        self._photo = ImageTk.PhotoImage(img)
-        self.image_label.config(image=self._photo, text="")
+        if autoplay and tpl["back"].get("autoplay"):
+            self.view.play()
 
     def replay(self):
-        if self.flipped:
-            play_wav(self._audio)
+        """R key: play the clip if the visible side shows or autoplays audio
+        (so a front without audio doesn't give the answer away)."""
+        side = self.app.template["back" if self.flipped else "front"]
+        if side.get("autoplay") or any(b["type"] == "audio" for b in side["blocks"]):
+            self.view.play()
+
+    def redraw(self):
+        """Show the current side again (after the card layout was edited)."""
+        if self.flipped and self.current() is not None:
+            self.show_back(autoplay=False)
+        else:
+            self.show_front(autoplay=False)
 
     def leave(self):
         stop_wav()
@@ -974,6 +894,8 @@ class App(tk.Tk):
         self.store = SavedStore(self.profiles.saved_dir(self.profile))
         self.saved_window: SavedLinesWindow | None = None
         self.cards = CardStore(self.profiles.cards_dir(self.profile))
+        self.template = templates.load(self.profiles.cards_dir(self.profile))  # card layout
+        self.template_window = None
         self.cards_window: CardsWindow | None = None
         self.current_screen = ""
         self.stats_var = tk.StringVar()
@@ -1035,6 +957,7 @@ class App(tk.Tk):
         cardsm = tk.Menu(bar, tearoff=False)
         cardsm.add_command(label="View cards...", command=self.show_cards, accelerator="Ctrl+K")
         cardsm.add_command(label="Study cards", command=self.show_study, accelerator="Ctrl+T")
+        cardsm.add_command(label="Card layout (front / back)...", command=self.edit_template)
         cardsm.add_command(label="New card from a saved line...", command=self.show_saved)
         cardsm.add_separator()
         cardsm.add_command(label="Open cards folder", command=lambda: open_folder(self.cards.root))
@@ -1727,6 +1650,9 @@ class App(tk.Tk):
             self.profile = p
             self.store = SavedStore(self.profiles.saved_dir(p))
             self.cards = CardStore(self.profiles.cards_dir(p))
+            self.template = templates.load(self.profiles.cards_dir(p))
+            if self.template_window and self.template_window.winfo_exists():
+                self.template_window.destroy()
             self.study_screen.reset()
             self._mark_saved()  # ★ marks on the Create screen are per profile
             if self.transcript:
@@ -1882,6 +1808,26 @@ class App(tk.Tk):
         self._show_screen("study")
         self._raise_main()
         self.study_screen.focus_set()
+        st = self.study_screen
+        if not st.flipped and st.current() is not None and self.template["front"].get("autoplay"):
+            st.view.play()
+
+    # ------------------------------------------------------------ card layout
+    def edit_template(self):
+        """Open the drag-and-drop card layout editor (one per profile)."""
+        from template_editor import TemplateEditor
+        stop_wav()
+        if self.template_window and self.template_window.winfo_exists():
+            self.template_window.deiconify()
+            self.template_window.lift()
+            self.template_window.focus_force()
+            return
+        self.template_window = TemplateEditor(self, self.template, self.cards, self.save_template)
+
+    def save_template(self, tpl: dict):
+        templates.save(self.cards.root, tpl)
+        self.template = templates.load(self.cards.root)
+        self.study_screen.redraw()
 
     def _study_key(self, event):
         """Space/Enter/R/Esc on the Study screen. (Other screens' widgets handle

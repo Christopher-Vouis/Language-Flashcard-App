@@ -100,6 +100,25 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
   **← Main menu** or Esc goes back.
   Cards added, edited or deleted while studying are picked up straight away.
 
+### Card layout editor
+
+- **✎ Edit card layout** (top right of the Study screen), **Cards → Card layout (front / back)...**, or
+  **Card layout...** in the Cards window. Each profile has its own layout.
+- **Blocks** (left): Target word, Reading, Definition, Sentence, Screenshot, Audio button,
+  Source (file & time), Divider line and Custom text.
+- **Drag** a block onto the **Front** or **Back** (a blue line shows where it will land), drag blocks to
+  reorder them or move them between sides, and drag one back onto the block list (or click its **✕**)
+  to remove it. Double-clicking a block in the list adds it to the side shown in the preview.
+- The **Preview** (right) shows one of your real cards — **◀ ▶** steps through them, **Front / Back**
+  switches side. Click a block (in the preview or a list) to change its **size, alignment, colour, bold**
+  (and, for the sentence, whether the target word is highlighted; for Custom text, the text itself).
+  The buttons there also move (↑ ↓), duplicate, move to the other side, or remove it.
+- **Play audio automatically** can be switched on for either side (e.g. a listening card: audio on the front).
+- **↶ Undo** (Ctrl+Z) undoes any step; **Reset to default layout** brings back the original look;
+  **Save** (Ctrl+S) applies it to study mode straight away. Closing with unsaved changes asks first.
+- Blocks with nothing to show on a card (e.g. no reading, or an audio-only card's screenshot) are
+  skipped in study mode. The layout is saved as `template.json` in the profile's cards folder.
+
 Command line alternative:
 
 ```
@@ -124,5 +143,7 @@ Command line alternative:
 - `profiles.py` — user profiles and the default profile.
 - `subtitles.py` — reads .srt / .vtt / .ass subtitle files as lines.
 - `theme.py` — the dark color scheme; every color is defined at the top, so it's easy to adjust.
+- `templates.py`, `card_view.py`, `template_editor.py` — card layouts: the data, drawing a card, and the drag-and-drop editor.
+- `audio.py` — plays the clips.
 - `app.py` — desktop window.
 - `transcribe_cli.py` — command-line version.
