@@ -138,6 +138,23 @@ class CardStore:
             self._write()
         return added
 
+    # ------------------------------------------------------------ study history
+    def mark_reviewed(self, card_id: str) -> None:
+        """Called when a card has been studied (flipped, then Next card)."""
+        card = self.get(card_id)
+        if card is None:
+            return
+        card["reviews"] = int(card.get("reviews", 0)) + 1
+        card["last_reviewed"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        self._write()
+
+    def counts(self, deck_id: str = ALL) -> dict:
+        """New = never studied; Due = studied before (with no spaced-repetition
+        schedule yet, every studied card comes round again); Total = all."""
+        cards = self.cards_in(deck_id)
+        new = sum(1 for c in cards if not c.get("reviews"))
+        return {"new": new, "due": len(cards) - new, "total": len(cards)}
+
     def select_deck(self, deck_id: str) -> None:
         if deck_id != self.selected_deck:
             self.selected_deck = deck_id

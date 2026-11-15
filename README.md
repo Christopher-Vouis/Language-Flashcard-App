@@ -13,10 +13,17 @@ timestamped transcript. Built on [faster-whisper](https://github.com/SYSTRAN/fas
 
 Double-click **`run.bat`**. The app opens at the **main menu**:
 
-- **Deck** — choose which deck to study (or **All cards**); **New deck...**, **Rename...** and **Delete**
-  manage decks. Deleting a deck never deletes its cards — they stay in All cards and their other decks.
+- **Welcome, <profile>** (top left) — **Change** opens the Profiles screen; **Sign Out** returns to it and
+  locks the rest of the app until a profile signs in.
+- **Deck** (top right) — which deck to study (or **All cards**). The bottom of the same drop-down has
+  **＋ New deck...**, **✎ Rename this deck...** and **✕ Delete this deck...** (also in the **Cards** menu).
+  Deleting a deck never deletes its cards — they stay in All cards and their other decks.
+- **New / Due / Total** for the chosen deck: *New* = cards never studied, *Total* = all its cards, and
+  *Due* = cards studied before (there's no spaced-repetition schedule yet, so every studied card comes
+  round again). A card counts as studied once you flip it and go on to the next card.
 - **Study** — review the cards in the chosen deck (see *Study mode* below).
 - **Create** — transcribe a video or song, save lines and make cards (everything below).
+  The buttons work with the mouse or the keyboard (Tab to one, then Enter or Space).
 
 Switch screens any time with **Navigate → Main menu / Study / Create** (Ctrl+1 / Ctrl+2 / Ctrl+3).
 
@@ -169,6 +176,7 @@ Command line alternative:
 - `saved.py` — the saved-lines library.
 - `cards.py` — the flashcard deck.
 - `profiles.py` — user profiles and the default profile.
+- `home.py` — the main menu (header band and the large Study / Create buttons).
 - `subtitles.py` — reads .srt / .vtt / .ass subtitle files as lines.
 - `theme.py` — the dark color scheme; every color is defined at the top, so it's easy to adjust.
 - `templates.py`, `card_view.py`, `template_editor.py` — card layouts: the data, drawing a card, and the drag-and-drop editor.

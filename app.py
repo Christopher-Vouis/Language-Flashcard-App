@@ -20,6 +20,7 @@ import media
 import templates
 from audio import play_wav, stop_wav
 from card_view import CardView
+from home import HomeScreen
 import subtitles
 import theme
 import transcriber as tr
@@ -897,6 +898,7 @@ class StudyScreen(ttk.Frame):
         if not self.flipped:
             self.show_back()
         else:
+            self.app.cards.mark_reviewed(self.deck[0])   # counts for New / Due on the main menu
             self.deck.append(self.deck.pop(0))  # move to the bottom of the stack
             self.reviewed += 1
             self.show_front()
@@ -999,7 +1001,7 @@ class App(tk.Tk):
         self.template_window = None
         self.cards_window: CardsWindow | None = None
         self.current_screen = ""
-        self.stats_var = tk.StringVar()
+        self.signed_out = False   # after Sign Out, only the Profiles screen is available
 
         self.file_var = tk.StringVar(value=initial_file or "")
         self.model_var = tk.StringVar(value="small")
@@ -1060,6 +1062,10 @@ class App(tk.Tk):
         cardsm.add_command(label="Study cards", command=self.show_study, accelerator="Ctrl+T")
         cardsm.add_command(label="Card layout (front / back)...", command=self.edit_template)
         cardsm.add_command(label="New card from a saved line...", command=self.show_saved)
+        cardsm.add_separator()
+        cardsm.add_command(label="New deck...", command=self.new_deck)
+        cardsm.add_command(label="Rename current deck...", command=self.rename_deck)
+        cardsm.add_command(label="Delete current deck...", command=self.delete_deck)
         cardsm.add_separator()
         cardsm.add_command(label="Open cards folder", command=lambda: open_folder(self.cards.root))
         bar.add_cascade(label="Cards", menu=cardsm)
@@ -1600,46 +1606,14 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------ screens
     def _build_home(self):
-        who = ttk.Frame(self.home_screen)
-        who.place(relx=1.0, x=-16, y=12, anchor="ne")
-        self.signed_in_var = tk.StringVar()
-        ttk.Label(who, textvariable=self.signed_in_var, foreground=theme.MUTED).pack(side="left", padx=(0, 8))
-        ttk.Button(who, text="Switch profile", command=self.show_profiles).pack(side="left")
-        box = ttk.Frame(self.home_screen)
-        box.place(relx=0.5, rely=0.45, anchor="center")
-        ttk.Label(box, text="Language Flashcards", font=("Segoe UI", 30, "bold")).pack()
-        ttk.Label(box, text="Learn vocabulary from the videos, shows and songs you watch.",
-                  font=("Segoe UI", 12), foreground=theme.MUTED).pack(pady=(4, 24))
-
-        # deck chooser: which deck Study uses (and the default deck for new cards)
-        decks = ttk.Frame(box)
-        decks.pack(pady=(0, 24))
-        ttk.Label(decks, text="Deck:", font=("Segoe UI", 12)).pack(side="left")
-        self.home_deck_var = tk.StringVar()
-        self.home_deck_combo = ttk.Combobox(decks, textvariable=self.home_deck_var, state="readonly",
-                                            width=24, font=("Segoe UI", 12))
-        self.home_deck_combo.pack(side="left", padx=8)
-        self.home_deck_combo.bind("<<ComboboxSelected>>", self._on_home_deck)
-        ttk.Button(decks, text="New deck...", command=self.new_deck).pack(side="left", padx=(4, 0))
-        ttk.Button(decks, text="Rename...", command=self.rename_deck).pack(side="left", padx=4)
-        ttk.Button(decks, text="Delete", command=self.delete_deck).pack(side="left")
-
-        row = ttk.Frame(box)
-        row.pack()
-        for col, (label, cmd, desc) in enumerate((
-            ("Study", self.show_study, "Review the cards\nin the chosen deck"),
-            ("Create", self.show_create, "Transcribe a video or song,\nsave lines and make cards"),
-        )):
-            ttk.Button(row, text=label, style="Big.TButton", width=10,
-                       command=cmd).grid(row=0, column=col, padx=24)
-            ttk.Label(row, text=desc, justify="center", foreground=theme.MUTED,
-                      font=("Segoe UI", 10)).grid(row=1, column=col, pady=(10, 0))
-        ttk.Label(box, textvariable=self.stats_var, foreground=theme.SUBTLE,
-                  font=("Segoe UI", 10)).pack(pady=(30, 0))
+        self.home = HomeScreen(self.home_screen, self)
+        self.home.pack(fill="both", expand=True)
 
     def _show_screen(self, name: str):
         screens = {"home": self.home_screen, "create": self.create_screen, "study": self.study_screen,
                    "profiles": self.profiles_screen}
+        if self.signed_out and name != "profiles":
+            name = "profiles"        # signed out: nothing else until someone signs in
         if name == self.current_screen:
             return
         if self.current_screen == "study":
@@ -1654,7 +1628,8 @@ class App(tk.Tk):
     def _set_title(self):
         where = {"home": "", "create": " – Create", "study": " – Study",
                  "profiles": " – Profiles"}.get(self.current_screen, "")
-        self.title(f"Language Flashcards{where}  ·  {self.profile['name']}")
+        who = "not signed in" if self.signed_out else self.profile["name"]
+        self.title(f"Language Flashcards{where}  ·  {who}")
 
     # ------------------------------------------------------------ profiles
     def _build_profiles(self):
@@ -1714,7 +1689,7 @@ class App(tk.Tk):
         tree.delete(*tree.get_children())
         for p in self.profiles.profiles:
             decks, cards = self._profile_counts(self.profiles.cards_dir(p))
-            name = p["name"] + ("   (signed in)" if p["id"] == self.profile["id"] else "")
+            name = p["name"] + ("   (signed in)" if p["id"] == self.profile["id"] and not self.signed_out else "")
             tree.insert("", "end", iid=p["id"], values=(
                 name, decks, cards, "★" if p["id"] == self.profiles.default else ""))
         tree.selection_set(self.profile["id"])
@@ -1738,12 +1713,25 @@ class App(tk.Tk):
         if p:
             self.sign_in(p["id"])
 
+    def sign_out(self):
+        """Main menu → Sign Out: back to the Profiles screen; the rest of the app
+        is locked until a profile signs in."""
+        stop_wav()
+        for win in (self.saved_window, self.cards_window, self.template_window):
+            if win and win.winfo_exists():
+                win.close()
+                if win.winfo_exists():   # e.g. unsaved card layout and the user chose Cancel
+                    return
+        self.signed_out = True
+        self.show_profiles()
+
     def sign_in(self, profile_id: str):
         """Switch to another profile's saved lines, cards and decks."""
         p = self.profiles.get(profile_id)
         if not p:
             return
         stop_wav()
+        self.signed_out = False
         if p["id"] != self.profile["id"]:
             for win in (self.saved_window, self.cards_window):
                 if win and win.winfo_exists():
@@ -1833,26 +1821,32 @@ class App(tk.Tk):
         self._show_screen("home")
 
     # ------------------------------------------------------------- decks
+    DECK_ACTIONS = (("＋  New deck...", "new"), ("✎  Rename this deck...", "rename"),
+                    ("✕  Delete this deck...", "delete"))
+
     def _update_home(self):
-        """Refresh the main menu's deck list and counts."""
-        self.signed_in_var.set(f"Signed in as {self.profile['name']}")
+        """Refresh the main menu: welcome line, deck dropdown, New / Due / Total."""
         cards = self.cards
         self._home_deck_ids = [ALL] + [d["id"] for d in cards.decks]
-        self.home_deck_combo.config(values=[
-            f"{cards.deck_name(i)}  ({len(cards.cards_in(i))})" for i in self._home_deck_ids])
+        labels = [f"{cards.deck_name(i)}  ({len(cards.cards_in(i))})" for i in self._home_deck_ids]
+        labels += ["─" * 22] + [text for text, _ in self.DECK_ACTIONS]   # actions under a divider
         current = cards.selected_deck if cards.selected_deck in self._home_deck_ids else ALL
-        self.home_deck_combo.current(self._home_deck_ids.index(current))
-        n_cards, n_lines = len(cards.cards), len(self.store.entries)
-        n_decks = len(cards.decks)
-        self.stats_var.set(f"{n_decks} deck{'s' if n_decks != 1 else ''}  ·  "
-                           f"{n_cards} card{'s' if n_cards != 1 else ''}  ·  "
-                           f"{n_lines} saved line{'s' if n_lines != 1 else ''}")
+        n = cards.counts(current)
+        self.home.update_view(self.profile["name"], labels, self._home_deck_ids.index(current),
+                              n["new"], n["due"], n["total"])
 
     def _on_home_deck(self, _event=None):
-        i = self.home_deck_combo.current()
-        if 0 <= i < len(self._home_deck_ids):
+        i = self.home.deck_combo.current()
+        n_decks = len(self._home_deck_ids)
+        if 0 <= i < n_decks:
             self.cards.select_deck(self._home_deck_ids[i])
-        self.on_decks_changed()
+            self.on_decks_changed()
+            return
+        self._update_home()          # put the dropdown back on the chosen deck first
+        action = i - n_decks - 1     # skip the divider line
+        if 0 <= action < len(self.DECK_ACTIONS):
+            {"new": self.new_deck, "rename": self.rename_deck,
+             "delete": self.delete_deck}[self.DECK_ACTIONS[action][1]]()
 
     def new_deck(self):
         deck = new_deck_dialog(self, self.cards)
