@@ -18,6 +18,7 @@ import shutil
 import time
 import uuid
 
+import srs
 from media import safe_name
 
 FIELDS = ("target_word", "reading", "definition")
@@ -138,22 +139,34 @@ class CardStore:
             self._write()
         return added
 
-    # ------------------------------------------------------------ study history
-    def mark_reviewed(self, card_id: str) -> None:
-        """Called when a card has been studied (flipped, then Next card)."""
+    # ------------------------------------------------------------ spaced repetition
+    def answer(self, card_id: str, grade: str) -> dict | None:
+        """Study mode's Again / Hard / Correct (see srs.py). Returns the new schedule."""
         card = self.get(card_id)
         if card is None:
-            return
-        card["reviews"] = int(card.get("reviews", 0)) + 1
-        card["last_reviewed"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            return None
+        sched = srs.answer(card, grade)
         self._write()
+        return sched
+
+    def due_cards(self, deck_id: str = ALL) -> list[dict]:
+        """Cards in the deck whose due date is today or earlier."""
+        day = srs.today()
+        return [c for c in self.cards_in(deck_id) if srs.is_due(c, day)]
+
+    def next_due(self, deck_id: str = ALL):
+        """The earliest due date among the deck's cards (a date), or None."""
+        dates = [srs.due_date(c) for c in self.cards_in(deck_id)]
+        return min(dates) if dates else None
 
     def counts(self, deck_id: str = ALL) -> dict:
-        """New = never studied; Due = studied before (with no spaced-repetition
-        schedule yet, every studied card comes round again); Total = all."""
+        """For the main menu. New = never studied; Due = studied cards due today
+        or earlier (learning, relearning or review); Total = all."""
         cards = self.cards_in(deck_id)
-        new = sum(1 for c in cards if not c.get("reviews"))
-        return {"new": new, "due": len(cards) - new, "total": len(cards)}
+        day = srs.today()
+        new = sum(1 for c in cards if srs.is_new(c))
+        due = sum(1 for c in cards if not srs.is_new(c) and srs.is_due(c, day))
+        return {"new": new, "due": due, "total": len(cards)}
 
     def select_deck(self, deck_id: str) -> None:
         if deck_id != self.selected_deck:

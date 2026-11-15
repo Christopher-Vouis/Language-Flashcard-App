@@ -18,9 +18,8 @@ Double-click **`run.bat`**. The app opens at the **main menu**:
 - **Deck** (top right) — which deck to study (or **All cards**). The bottom of the same drop-down has
   **＋ New deck...**, **✎ Rename this deck...** and **✕ Delete this deck...** (also in the **Cards** menu).
   Deleting a deck never deletes its cards — they stay in All cards and their other decks.
-- **New / Due / Total** for the chosen deck: *New* = cards never studied, *Total* = all its cards, and
-  *Due* = cards studied before (there's no spaced-repetition schedule yet, so every studied card comes
-  round again). A card counts as studied once you flip it and go on to the next card.
+- **New / Due / Total** for the chosen deck: *New* = cards never studied, *Due* = studied cards whose
+  due date is today or earlier, *Total* = all its cards.
 - **Study** — review the cards in the chosen deck (see *Study mode* below).
 - **Create** — transcribe a video or song, save lines and make cards (everything below).
   The buttons work with the mouse or the keyboard (Tab to one, then Enter or Space).
@@ -103,9 +102,19 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
 - **Front:** the target word and its sentence (the word highlighted in red). **Flip** (Space / Enter)
   shows the **back**: reading, definition, screenshot, and plays the audio clip automatically
   (**▶ Replay audio** or R to hear it again).
-- **Next card →** (Space / Enter) puts the card at the bottom of the stack and shows the next front.
-  **← Main menu** or Esc goes back.
-  Cards added, edited or deleted while studying are picked up straight away.
+- Only **due** cards are shown: every card has a due date, and it's due when that date is today or
+  earlier. Cards being learned come first, then reviews (most overdue first), then new cards.
+- After flipping, answer with **Again** (1), **Hard** (2) or **Correct** (3, Space or Enter). Under each
+  button is when the card would come back.
+  - **Again** — due today: the card comes back a few cards later in this session.
+  - **Correct** on a new card — it needs **3 Corrects** (in a row; Again starts over) before it's due on
+    a later day, then it's due tomorrow.
+  - **Correct** on a learned card — pushed forward **2.5 × the days since you last studied it**, so a card
+    you still remember after a long gap goes much further out. **Hard** = 1.2 × (at least 1 day).
+  - A learned card that gets **Again** on a later day is relearned: its next **Correct** makes it due tomorrow.
+- When nothing is left: "All caught up", with the date the next card is due.
+  **← Main menu** or Esc goes back. Cards added, edited or deleted while studying are picked up straight away.
+  Cards studied before due dates existed start out due today.
 
 ### Card layout editor
 
@@ -175,6 +184,7 @@ Command line alternative:
 - `media.py` — cuts audio clips (44.1 kHz WAV, with 0.2 s / 0.3 s padding) and screenshots.
 - `saved.py` — the saved-lines library.
 - `cards.py` — the flashcard deck.
+- `srs.py` — spaced repetition: due dates and what Again / Hard / Correct do (the numbers are at the top).
 - `profiles.py` — user profiles and the default profile.
 - `home.py` — the main menu (header band and the large Study / Create buttons).
 - `subtitles.py` — reads .srt / .vtt / .ass subtitle files as lines.

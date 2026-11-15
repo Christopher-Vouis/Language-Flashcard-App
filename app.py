@@ -17,6 +17,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import media
+import srs
 import templates
 from audio import play_wav, stop_wav
 from card_view import CardView
@@ -819,16 +820,17 @@ class CardsWindow(RecordWindow):
 
 # ------------------------------------------------------------ study mode
 class StudyScreen(ttk.Frame):
-    """Go through the cards one at a time: front → flip → back → next card,
-    each side drawn from the profile's card template. A finished card goes
-    to the bottom of the stack. Shown inside the main window;
-    its keys (Space/Enter/R/Esc) are routed here by App._study_key."""
+    """Spaced-repetition study: the deck's DUE cards one at a time - front →
+    Flip → back → Again / Hard / Correct (see srs.py), each side drawn from
+    the card's layout. A card still due today after its answer comes back
+    later in the session. Shown inside the main window; its keys (Space /
+    Enter, 1 / 2 / 3, R, Esc) are routed here by App._study_key."""
 
     def __init__(self, parent, app: "App"):
         super().__init__(parent)
         self.app = app
         self.deck_id = app.cards.selected_deck   # which deck is being studied (ALL = every card)
-        self.deck: list[str] = [c["id"] for c in app.cards.cards_in(self.deck_id)]  # top of stack = deck[0]
+        self.deck: list[str] = self._due_ids()   # the session queue: deck[0] is shown
         self.reviewed = 0
         self.flipped = False
         self.progress_var = tk.StringVar()
@@ -851,32 +853,61 @@ class StudyScreen(ttk.Frame):
         self.view = CardView(self)
         self.view.pack(fill="both", expand=True, padx=24, pady=8)
 
-        # ---- action button
+        # ---- buttons: Flip (front), then Again / Hard / Correct (back)
+        style = ttk.Style(self)
+        for name, bg, hover in (("Again", "#7a3434", "#8c3f3f"), ("Hard", theme.RAISED, theme.RAISED_HOVER),
+                                ("Correct", theme.ACCENT, theme.ACCENT_HOVER)):
+            style.configure(f"{name}.TButton", background=bg, lightcolor=bg, darkcolor=bg,
+                            foreground="#ffffff", font=("Segoe UI", 12, "bold"), padding=(10, 8))
+            style.map(f"{name}.TButton", background=[("active", hover)],
+                      lightcolor=[("active", hover)], darkcolor=[("active", hover)])
         bottom = ttk.Frame(self, padding=(12, 4, 12, 14))
         bottom.pack(fill="x")
-        # takefocus=False: Space/Enter are handled by the window, so a focused
-        # button must not fire a second time (which would skip a card)
-        self.action_btn = ttk.Button(bottom, text="Flip", command=self.advance, width=20,
+        self.buttons = ttk.Frame(bottom)
+        self.buttons.pack()
+        # takefocus=False: Space/Enter/1/2/3 are handled by the window, so a
+        # focused button must not fire a second time (which would skip a card)
+        self.action_btn = ttk.Button(self.buttons, text="Flip", command=self.advance, width=20,
                                      takefocus=False)
-        self.action_btn.pack()
-        ttk.Label(bottom, text="Space / Enter: flip or next  ·  R: replay audio  ·  Esc: main menu",
-                  foreground=theme.SUBTLE).pack(pady=(6, 0))
+        self.grade_bar = ttk.Frame(self.buttons)
+        self.grade_hints: dict[str, tk.StringVar] = {}
+        for col, (grade, label, key) in enumerate(((srs.AGAIN, "Again", "1"), (srs.HARD_GRADE, "Hard", "2"),
+                                                   (srs.CORRECT, "Correct", "3"))):
+            ttk.Button(self.grade_bar, text=label, style=f"{label}.TButton", width=12, takefocus=False,
+                       command=lambda g=grade: self.grade(g)).grid(row=0, column=col, padx=8)
+            hint = tk.StringVar()
+            self.grade_hints[grade] = hint
+            ttk.Label(self.grade_bar, textvariable=hint, foreground=theme.MUTED).grid(row=1, column=col, pady=(4, 0))
+            ttk.Label(self.grade_bar, text=f"key {key}", foreground=theme.SUBTLE,
+                      font=("Segoe UI", 8)).grid(row=2, column=col)
+        self.keys_var = tk.StringVar()
+        ttk.Label(bottom, textvariable=self.keys_var, foreground=theme.SUBTLE).pack(pady=(6, 0))
         self.show_front(autoplay=False)
 
-    # --- deck handling
+    # --- the session queue
+    def _due_ids(self) -> list[str]:
+        """Due cards of the deck, in study order: cards already in progress
+        (learning / relearning) first, then reviews (longest overdue first),
+        then new cards in the order they were made."""
+        order = {"learning": 0, "relearning": 0, "review": 1, "new": 2}
+        cards = self.app.cards.due_cards(self.deck_id)
+        cards.sort(key=lambda c: (order[srs.schedule(c)["state"]],
+                                  srs.due_date(c) if srs.schedule(c)["state"] == "review" else 0))
+        return [c["id"] for c in cards]
+
     def sync(self):
         """Called when cards are added/edited/deleted elsewhere, or the deck
-        chosen on the main menu changes."""
+        chosen on the main menu changes: keep the queue to cards that are due."""
         cards = self.app.cards
         if self.deck_id != cards.selected_deck:  # different deck: start it fresh
             self.deck_id = cards.selected_deck
             self.deck = []
             self.reviewed = 0
             self.flipped = False
-        in_deck = cards.cards_in(self.deck_id)
-        ids = {c["id"] for c in in_deck}
-        self.deck = [i for i in self.deck if i in ids]
-        self.deck += [c["id"] for c in in_deck if c["id"] not in self.deck]
+        due = self._due_ids()
+        due_set = set(due)
+        self.deck = [i for i in self.deck if i in due_set]
+        self.deck += [i for i in due if i not in self.deck]
         current = self.current()
         if current is None or not self.flipped:
             self.show_front(autoplay=False)
@@ -892,23 +923,49 @@ class StudyScreen(ttk.Frame):
         return None
 
     def advance(self):
+        """Flip button / Space / Enter: flip the card; on the back it means Correct."""
         self.focus_set()  # keep keyboard shortcuts on the window
         if self.current() is None:
             return
         if not self.flipped:
             self.show_back()
         else:
-            self.app.cards.mark_reviewed(self.deck[0])   # counts for New / Due on the main menu
-            self.deck.append(self.deck.pop(0))  # move to the bottom of the stack
-            self.reviewed += 1
-            self.show_front()
+            self.grade(srs.CORRECT)
+
+    def grade(self, grade: str):
+        """Again / Hard / Correct on the card being shown."""
+        self.focus_set()
+        c = self.current()
+        if c is None or not self.flipped:
+            return
+        self.app.cards.answer(c["id"], grade)
+        self.deck.pop(0)
+        if srs.is_due(c):   # still due today: it comes back a few cards later
+            self.deck.insert(min(srs.REQUEUE_AFTER, len(self.deck)), c["id"])
+        self.reviewed += 1
+        self.show_front()
 
     # --- display
     def _update_progress(self):
-        n = len(self.deck)
+        states = [srs.schedule(c)["state"] for c in (self.app.cards.get(i) for i in self.deck) if c]
+        new = states.count("new")
+        learning = states.count("learning") + states.count("relearning")
+        review = states.count("review")
         self.progress_var.set(f"Deck: {self.app.cards.deck_name(self.deck_id)}  ·  "
-                              f"{n} card{'s' if n != 1 else ''}  ·  "
-                              f"{self.reviewed} reviewed this session")
+                              f"New {new}  ·  Learning {learning}  ·  Review {review}  ·  "
+                              f"{self.reviewed} answered this session")
+
+    def _show_buttons(self, back: bool, enabled: bool = True):
+        """Flip on the front; Again / Hard / Correct on the back."""
+        if back:
+            self.action_btn.pack_forget()
+            self.grade_bar.pack()
+            self.keys_var.set("1 Again  ·  2 Hard  ·  3 / Space / Enter Correct  ·  R: replay audio  ·  Esc: main menu")
+        else:
+            self.grade_bar.pack_forget()
+            self.action_btn.pack()
+            self.action_btn.config(state="normal" if enabled else "disabled")
+            self.keys_var.set("Space / Enter: flip  ·  R: replay audio  ·  Esc: main menu")
 
     def _abs(self, rel: str) -> str:
         return self.app.cards.abs_path(rel)
@@ -921,16 +978,22 @@ class StudyScreen(ttk.Frame):
         tpl = self.app.layout_for(c)
         self.layout_var.set("This card has its own layout" if c and c.get("layout") else "")
         if c is None:
-            if self.app.cards.cards and self.deck_id != ALL:
+            cards = self.app.cards
+            nxt = cards.next_due(self.deck_id)
+            if nxt is not None:
+                days = (nxt - srs.today()).days
+                msg = (f"All caught up!\n\nNo more cards are due in this deck today."
+                       f"\nThe next one is due {srs.describe_days(days)}  ({nxt:%a %d %b %Y}).")
+            elif cards.cards and self.deck_id != ALL:
                 msg = ("This deck is empty.\n\nChoose another deck on the main menu, or add cards "
                        "to this one (Saved lines → New card, or Add to deck in the Cards window).")
             else:
                 msg = "No cards yet.\n\nCreate cards from Saved lines → New card, then come back here."
             self.view.show(None, {"rows": []}, self._abs, empty_text=msg)
-            self.action_btn.config(text="Flip", state="disabled")
+            self._show_buttons(back=False, enabled=False)
             return
         self.view.show(c, tpl["front"], self._abs, empty_text="(The front of this card layout is empty.)")
-        self.action_btn.config(text="Flip", state="normal")
+        self._show_buttons(back=False)
         if autoplay and tpl["front"].get("autoplay"):
             self.view.play()
 
@@ -941,7 +1004,9 @@ class StudyScreen(ttk.Frame):
         self.flipped = True
         tpl = self.app.layout_for(c)
         self.view.show(c, tpl["back"], self._abs, empty_text="(The back of this card layout is empty.)")
-        self.action_btn.config(text="Next card  →", state="normal")
+        for grade, hint in self.grade_hints.items():
+            hint.set(srs.preview(c, grade))
+        self._show_buttons(back=True)
         if autoplay and tpl["back"].get("autoplay"):
             self.view.play()
 
@@ -1028,7 +1093,8 @@ class App(tk.Tk):
         self._build_home()
         self._build_profiles()
         self.study_screen = StudyScreen(self, self)
-        for key in ("<space>", "<Return>", "<KeyPress-r>", "<KeyPress-R>", "<Escape>"):
+        for key in ("<space>", "<Return>", "<KeyPress-r>", "<KeyPress-R>", "<Escape>",
+                    "<KeyPress-1>", "<KeyPress-2>", "<KeyPress-3>", "<KP_1>", "<KP_2>", "<KP_3>", "<KP_Enter>"):
             self.bind(key, self._study_key)
         if not self.profiles.default:
             self.show_profiles(startup=True)   # no default profile: ask who's using the app
@@ -1950,12 +2016,14 @@ class App(tk.Tk):
             self.cards_window.refresh()
 
     def _study_key(self, event):
-        """Space/Enter/R/Esc on the Study screen. (Other screens' widgets handle
+        """Space/Enter/1/2/3/R/Esc on the Study screen. (Other screens' widgets handle
         these keys themselves; this does nothing unless Study is showing.)"""
         if self.current_screen != "study":
             return None
-        if event.keysym in ("space", "Return"):
+        if event.keysym in ("space", "Return", "KP_Enter"):
             self.study_screen.advance()
+        elif event.char in ("1", "2", "3"):
+            self.study_screen.grade((srs.AGAIN, srs.HARD_GRADE, srs.CORRECT)[int(event.char) - 1])
         elif event.keysym in ("r", "R"):
             self.study_screen.replay()
         elif event.keysym == "Escape":
