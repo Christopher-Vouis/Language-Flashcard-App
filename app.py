@@ -488,12 +488,7 @@ class RecordWindow(tk.Toplevel):
         self.menu = tk.Menu(self, tearoff=False)
         self.add_actions(bottom, self.menu)
         self.menu.add_command(label="▶  Play", command=self.preview.play)
-        self.menu.add_separator()
-        self.menu.add_command(label="Delete selected", command=self.delete_selected)
-        ttk.Button(bottom, text="Delete selected", command=self.delete_selected).pack(side="left", padx=6)
-        ttk.Button(bottom, text="Open folder",
-                   command=lambda: open_folder(self.FOLDER)).pack(side="left")
-        ttk.Button(bottom, text="Close", command=self.close).pack(side="right")
+        self.add_standard_buttons(bottom, self.menu)
 
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.refresh()
@@ -520,6 +515,15 @@ class RecordWindow(tk.Toplevel):
 
     def add_filters(self, top: ttk.Frame) -> None:
         """Add window-specific filters to the right of the search box."""
+
+    def add_standard_buttons(self, bar: ttk.Frame, menu: tk.Menu) -> None:
+        """Delete selected / Open folder / Close (windows can replace these)."""
+        menu.add_separator()
+        menu.add_command(label="Delete selected", command=self.delete_selected)
+        ttk.Button(bar, text="Delete selected", command=self.delete_selected).pack(side="left", padx=6)
+        ttk.Button(bar, text="Open folder",
+                   command=lambda: open_folder(self.FOLDER)).pack(side="left")
+        ttk.Button(bar, text="Close", command=self.close).pack(side="right")
 
     # --- shared behaviour
     @staticmethod
@@ -818,6 +822,195 @@ class CardsWindow(RecordWindow):
         self.app.on_cards_changed()  # refreshes this list and an open study window
 
 
+# ------------------------------------------------------------ view deck
+def _status(c: dict) -> str:
+    return {"new": "New", "learning": "Learning", "relearning": "Relearning",
+            "review": "Review"}[srs.schedule(c)["state"]]
+
+
+def _due_text(c: dict) -> str:
+    days = (srs.due_date(c) - srs.today()).days
+    return "now" if days <= 0 else srs.describe_days(days).replace("in ", "")
+
+
+class DeckWindow(CardsWindow):
+    """Main menu → View / Edit: the cards of one deck. Remove selected takes
+    cards out of the deck (they aren't deleted); Add cards picks cards from
+    all your cards; Reset progress makes the deck's cards new again."""
+    NOUN = ("card", "cards")
+    COLUMNS = (
+        ("word", "Target word", 120, False, "w"),
+        ("reading", "Reading", 100, False, "w"),
+        ("definition", "Definition", 170, True, "w"),
+        ("sentence", "Sentence", 200, True, "w"),
+        ("status", "Status", 80, False, "center"),
+        ("due", "Due", 85, False, "center"),
+        ("media", "Media", 55, False, "center"),
+    )
+    WINDOW_ATTR = "deck_window"
+
+    def __init__(self, app: "App", deck_id: str):
+        self.deck_id = deck_id
+        self.add_window: AddCardsWindow | None = None
+        super().__init__(app)
+
+    @property
+    def TITLE(self):  # noqa: N802
+        return f"View Deck — {self.app.cards.deck_name(self.deck_id)}"
+
+    @property
+    def is_all(self) -> bool:
+        return self.deck_id == ALL
+
+    def add_filters(self, top):
+        self.deck_label = ttk.Label(top, foreground=theme.MUTED)
+        self.deck_label.pack(side="left", padx=(16, 0))
+
+    def records(self):
+        return self.app.cards.cards_in(self.deck_id)
+
+    def row(self, c):
+        one_line = lambda s: " ".join(s.split())  # noqa: E731
+        n = len(card_images(c))
+        media = ("♪" if c.get("audio_clip") else "") + (f" ▣×{n}" if n > 1 else " ▣" if n else "")
+        return (c["target_word"], c["reading"], one_line(c["definition"]), c["sentence"],
+                _status(c), _due_text(c), media.strip())
+
+    def refresh(self):
+        if not self.is_all and not self.app.cards.deck(self.deck_id):   # deck was deleted
+            self.close()
+            return
+        self.title(self.TITLE)
+        cards = self.app.cards
+        n = cards.counts(self.deck_id)
+        self.deck_label.config(text=f"New {n['new']}  ·  Due {n['due']}"
+                               + ("   (All cards: use the Deck menu on the main menu to pick a deck "
+                                  "to add or remove cards)" if self.is_all else ""))
+        for b in (self.add_btn, self.remove_btn):
+            b.config(state="disabled" if self.is_all else "normal")
+        super().refresh()
+
+    def add_actions(self, bar, menu):
+        self.add_btn = ttk.Button(bar, text="＋  Add cards...", command=self.add_cards)
+        self.add_btn.pack(side="left", padx=(0, 6))
+        self.remove_btn = ttk.Button(bar, text="Remove selected", command=self.delete_selected)
+        self.remove_btn.pack(side="left", padx=(0, 6))
+        ttk.Button(bar, text="✎  Edit card...", command=self.edit_card).pack(side="left", padx=(0, 6))
+        ttk.Button(bar, text="Reset progress...", command=self.reset_progress).pack(side="left", padx=(18, 0))
+        menu.add_command(label="✎  Edit card...", command=self.edit_card)
+        menu.add_command(label="Remove from deck", command=self.delete_selected)
+        self.tree.bind("<Return>", lambda e: self.edit_card())
+        self.bind("<Control-e>", lambda e: self.edit_card())
+
+    def add_standard_buttons(self, bar, menu):
+        ttk.Button(bar, text="Close", command=self.close).pack(side="right")
+
+    def delete_selected(self):
+        """Remove selected (and the Delete key): out of this deck, not deleted."""
+        ids = list(self.tree.selection())
+        if not ids or self.is_all:
+            return
+        stop_wav()
+        n = self.app.cards.remove_from_deck(ids, self.deck_id)
+        self.preview.clear()
+        self.app.on_cards_changed()
+        self.count_var.set(f"Removed {n} card{'s' if n != 1 else ''} from this deck "
+                           "(still in All cards)")
+
+    def reset_progress(self):
+        cards = self.records()
+        if not cards:
+            messagebox.showinfo("Reset progress", "This deck has no cards.", parent=self)
+            return
+        n = len(cards)
+        shared = sum(1 for c in cards if len(c.get("decks", [])) > 1)
+        msg = (f'Reset the study progress of all {n} card{"s" if n != 1 else ""} in '
+               f'"{self.app.cards.deck_name(self.deck_id)}"?\n\n'
+               "Every card becomes New and due today; its due date and review history are lost. "
+               "This can't be undone.")
+        if shared and not self.is_all:
+            msg += (f"\n\n{shared} of these cards {'is' if shared == 1 else 'are'} also in other decks - "
+                    f"{'its' if shared == 1 else 'their'} progress is reset there too.")
+        if not messagebox.askyesno("Reset progress", msg, icon="warning", default="no", parent=self):
+            return
+        self.app.cards.reset_progress([c["id"] for c in cards])
+        self.app.on_cards_changed()
+        self.count_var.set(f"Progress reset for {n} card{'s' if n != 1 else ''}")
+
+    def add_cards(self):
+        if self.is_all:
+            return
+        stop_wav()
+        if self.add_window and self.add_window.winfo_exists():
+            self.add_window.lift()
+            self.add_window.focus_force()
+            return
+        self.add_window = AddCardsWindow(self)
+
+    def added(self, ids: list[str]):
+        """Called by AddCardsWindow: select the cards just added."""
+        self.app.on_cards_changed()
+        keep = [i for i in ids if self.tree.exists(i)]
+        if keep:
+            self.tree.selection_set(keep)
+            self.tree.focus(keep[0])
+            self.tree.see(keep[0])
+
+    def close(self):
+        if self.add_window and self.add_window.winfo_exists():
+            self.add_window.close()
+        super().close()
+
+
+class AddCardsWindow(CardsWindow):
+    """View Deck → Add cards: all your cards (filter by deck, search); select
+    some and press Add to deck to put them in the deck being viewed."""
+    WINDOW_ATTR = ""
+
+    def __init__(self, deck_window: DeckWindow):
+        self.deck_window = deck_window
+        super().__init__(deck_window.app)
+        self.transient(deck_window)
+
+    @property
+    def TITLE(self):  # noqa: N802
+        return f"Add cards to {self.app.cards.deck_name(self.deck_window.deck_id)}"
+
+    def row(self, c):
+        values = list(super().row(c))
+        if self.deck_window.deck_id in c.get("decks", []):
+            values[0] = "✓ " + values[0]       # already in the deck
+        return tuple(values)
+
+    def add_actions(self, bar, menu):
+        name = self.app.cards.deck_name(self.deck_window.deck_id)
+        ttk.Button(bar, text="＋  Add to deck", style="Accent.TButton",
+                   command=self.add_selected).pack(side="left")
+        ttk.Label(bar, text=f"Select cards (Ctrl / Shift for several), then Add to deck to put them in "
+                            f'"{name}".  ✓ = already in it.', foreground=theme.SUBTLE).pack(side="left", padx=12)
+        menu.add_command(label="＋  Add to deck", command=self.add_selected)
+        self.tree.bind("<Return>", lambda e: self.add_selected())
+
+    def add_standard_buttons(self, bar, menu):
+        pass   # no other buttons on this one
+
+    def delete_selected(self):
+        pass   # the Delete key does nothing here
+
+    def add_selected(self):
+        ids = list(self.tree.selection())
+        if not ids:
+            messagebox.showinfo("No card selected", "Select one or more cards first.", parent=self)
+            return
+        self.app.cards.add_to_deck(ids, self.deck_window.deck_id)
+        self.close()
+        self.deck_window.added(ids)
+
+    def close(self):
+        stop_wav()
+        self.destroy()
+
+
 # ------------------------------------------------------------ study mode
 class StudyScreen(ttk.Frame):
     """Spaced-repetition study: the deck's DUE cards one at a time - front →
@@ -1065,6 +1258,7 @@ class App(tk.Tk):
         self.template = templates.load(self.profiles.cards_dir(self.profile))  # card layout
         self.template_window = None
         self.cards_window: CardsWindow | None = None
+        self.deck_window: DeckWindow | None = None
         self.current_screen = ""
         self.signed_out = False   # after Sign Out, only the Profiles screen is available
 
@@ -1125,6 +1319,7 @@ class App(tk.Tk):
 
         cardsm = tk.Menu(bar, tearoff=False)
         cardsm.add_command(label="View cards...", command=self.show_cards, accelerator="Ctrl+K")
+        cardsm.add_command(label="View / edit current deck...", command=self.show_deck)
         cardsm.add_command(label="Study cards", command=self.show_study, accelerator="Ctrl+T")
         cardsm.add_command(label="Card layout (front / back)...", command=self.edit_template)
         cardsm.add_command(label="New card from a saved line...", command=self.show_saved)
@@ -1670,6 +1865,22 @@ class App(tk.Tk):
     def show_cards(self):
         self._open_window("cards_window", CardsWindow)
 
+    def show_deck(self):
+        """Main menu → View / Edit: the View Deck window for the chosen deck."""
+        stop_wav()
+        deck_id = self.cards.selected_deck if self.cards.deck(self.cards.selected_deck) else ALL
+        win = self.deck_window
+        if win and win.winfo_exists():
+            if win.deck_id != deck_id:
+                win.close()
+            else:
+                win.refresh()
+                win.deiconify()
+                win.lift()
+                win.focus_force()
+                return
+        self.deck_window = DeckWindow(self, deck_id)
+
     # ------------------------------------------------------------ screens
     def _build_home(self):
         self.home = HomeScreen(self.home_screen, self)
@@ -1783,7 +1994,7 @@ class App(tk.Tk):
         """Main menu → Sign Out: back to the Profiles screen; the rest of the app
         is locked until a profile signs in."""
         stop_wav()
-        for win in (self.saved_window, self.cards_window, self.template_window):
+        for win in (self.saved_window, self.cards_window, self.deck_window, self.template_window):
             if win and win.winfo_exists():
                 win.close()
                 if win.winfo_exists():   # e.g. unsaved card layout and the user chose Cancel
@@ -1799,7 +2010,7 @@ class App(tk.Tk):
         stop_wav()
         self.signed_out = False
         if p["id"] != self.profile["id"]:
-            for win in (self.saved_window, self.cards_window):
+            for win in (self.saved_window, self.cards_window, self.deck_window):
                 if win and win.winfo_exists():
                     win.close()
             self.profile = p
@@ -1958,6 +2169,12 @@ class App(tk.Tk):
         if self.cards_window and self.cards_window.winfo_exists():
             self.cards_window.update_deck_choices()
             self.cards_window.refresh()
+        win = self.deck_window
+        if win and win.winfo_exists():
+            if win.deck_id != (self.cards.selected_deck if self.cards.deck(self.cards.selected_deck) else ALL):
+                win.close()      # a different deck was chosen on the main menu
+            else:
+                win.refresh()
         self.study_screen.sync()
 
     def show_create(self):
@@ -2036,7 +2253,7 @@ class App(tk.Tk):
 
     def on_cards_changed(self):
         """Keep both list windows in step (card counts / card list)."""
-        for win in (self.saved_window, self.cards_window):
+        for win in (self.saved_window, self.cards_window, self.deck_window):
             if win and win.winfo_exists():
                 win.refresh()
         self.study_screen.sync()

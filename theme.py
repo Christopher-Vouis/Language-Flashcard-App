@@ -70,6 +70,13 @@ def apply(root: tk.Tk) -> ttk.Style:
               lightcolor=[("pressed", "#4a7bd9"), ("active", ACCENT_HOVER)],
               darkcolor=[("pressed", "#4a7bd9"), ("active", ACCENT_HOVER)])
 
+    style.configure("Accent.TButton", background=ACCENT, lightcolor=ACCENT, darkcolor=ACCENT,
+                    foreground="#ffffff", font=("Segoe UI", 10, "bold"))
+    style.map("Accent.TButton",
+              background=[("pressed", "#4a7bd9"), ("active", ACCENT_HOVER)],
+              lightcolor=[("pressed", "#4a7bd9"), ("active", ACCENT_HOVER)],
+              darkcolor=[("pressed", "#4a7bd9"), ("active", ACCENT_HOVER)])
+
     # check boxes
     style.configure("TCheckbutton", background=BG, foreground=FG,
                     indicatorbackground=SURFACE, indicatorforeground=FG, indicatorcolor=SURFACE)

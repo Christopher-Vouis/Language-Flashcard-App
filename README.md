@@ -18,6 +18,14 @@ Double-click **`run.bat`**. The app opens at the **main menu**:
 - **Deck** (top right) — which deck to study (or **All cards**). The bottom of the same drop-down has
   **＋ New deck...**, **✎ Rename this deck...** and **✕ Delete this deck...** (also in the **Cards** menu).
   Deleting a deck never deletes its cards — they stay in All cards and their other decks.
+- **View / Edit** (under the Deck drop-down, or **Cards → View / edit current deck...**) — the **View Deck**
+  window: the deck's cards with their status (New / Learning / Review) and when each is due.
+  - **Add cards...** opens a list of all your cards (search, or filter by deck; ✓ = already in this deck):
+    select some (Ctrl / Shift for several) and press **Add to deck**.
+  - **Remove selected** (or Delete) takes cards out of this deck — they aren't deleted, they stay in
+    All cards and any other decks.
+  - **Reset progress...** makes every card in the deck New and due today again (asks first; this
+    can't be undone, and a card in several decks is reset in all of them).
 - **New / Due / Total** for the chosen deck: *New* = cards never studied, *Due* = studied cards whose
   due date is today or earlier, *Total* = all its cards.
 - **Study** — review the cards in the chosen deck (see *Study mode* below).

@@ -3,7 +3,7 @@ The main menu screen.
 
     ┌────────────────────────────────────────────────────────────────┐
     │ Welcome, <profile>                         Deck: [ deck ▾ ]    │  header
-    │ Change | Sign Out                                              │
+    │ Change | Sign Out                                  [View / Edit]│
     ├─── gradient band, black bar, soft shadow ──────────────────────┤
     │                      New:      0                               │
     │                      Due:      0                               │  centred
@@ -150,7 +150,7 @@ class BevelButton(tk.Canvas):
 
 
 class HomeScreen(ttk.Frame):
-    """Main menu. `app` provides: show_study, show_create, show_profiles, sign_out,
+    """Main menu. `app` provides: show_study, show_create, show_profiles, sign_out, show_deck,
     and the deck dropdown handlers (_on_home_deck)."""
 
     # full-size measurements (scaled down in small windows). Buttons are 75% of the
@@ -178,13 +178,18 @@ class HomeScreen(ttk.Frame):
         self._link(links, "Sign Out", app.sign_out).pack(side="left")
 
         right = tk.Frame(header, background=HEADER_BG)
-        right.place(relx=1.0, x=-36, y=54, anchor="ne")
-        tk.Label(right, text="Deck:", background=HEADER_BG, foreground=theme.FG,
+        right.place(relx=1.0, x=-36, y=30, anchor="ne")
+        deck_row = tk.Frame(right, background=HEADER_BG)
+        deck_row.pack(anchor="e")
+        tk.Label(deck_row, text="Deck:", background=HEADER_BG, foreground=theme.FG,
                  font=("Segoe UI", 11)).pack(side="left", padx=(0, 8))
         self.deck_var = tk.StringVar()
-        self.deck_combo = ttk.Combobox(right, textvariable=self.deck_var, state="readonly",
+        self.deck_combo = ttk.Combobox(deck_row, textvariable=self.deck_var, state="readonly",
                                        width=28, font=("Segoe UI", 11))
         self.deck_combo.pack(side="left")
+        # under the dropdown: open the View Deck window for the chosen deck
+        self.view_deck_btn = ttk.Button(right, text="View / Edit", command=app.show_deck, takefocus=False)
+        self.view_deck_btn.pack(anchor="e", pady=(8, 0))
         self.deck_combo.bind("<<ComboboxSelected>>", app._on_home_deck)
         HeaderBand(self, 70).pack(fill="x")
 

@@ -154,6 +154,30 @@ class CardStore:
         day = srs.today()
         return [c for c in self.cards_in(deck_id) if srs.is_due(c, day)]
 
+    def remove_from_deck(self, card_ids, deck_id: str) -> int:
+        """Take cards out of a deck without deleting them. Returns how many."""
+        ids, n = set(card_ids), 0
+        for c in self.cards:
+            if c["id"] in ids and deck_id in c.get("decks", []):
+                c["decks"] = [d for d in c["decks"] if d != deck_id]
+                n += 1
+        if n:
+            self._write()
+        return n
+
+    def reset_progress(self, card_ids) -> int:
+        """Forget the study history of these cards: they become new, due today."""
+        ids, n = set(card_ids), 0
+        for c in self.cards:
+            if c["id"] in ids:
+                for k in ("srs", "reviews", "last_reviewed"):
+                    c.pop(k, None)
+                srs.schedule(c)
+                n += 1
+        if n:
+            self._write()
+        return n
+
     def next_due(self, deck_id: str = ALL):
         """The earliest due date among the deck's cards (a date), or None."""
         dates = [srs.due_date(c) for c in self.cards_in(deck_id)]
