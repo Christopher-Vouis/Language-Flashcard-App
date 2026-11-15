@@ -67,8 +67,8 @@ class BevelButton(tk.Canvas):
     """A large button with a dark inset bevel, like the mockup's Study / Create.
     Hover / pressed states, keyboard focus (Tab), Enter or Space to press."""
 
-    def __init__(self, parent, text: str, command, width: int = 436, height: int = 198,
-                 font_size: int = 40):
+    def __init__(self, parent, text: str, command, width: int = 327, height: int = 149,
+                 font_size: int = 30):
         super().__init__(parent, width=width, height=height, highlightthickness=0, bd=0,
                          background=theme.BG, takefocus=True, cursor="hand2")
         self.text, self.command = text, command
@@ -89,6 +89,7 @@ class BevelButton(tk.Canvas):
         self.bind("<space>", lambda e: (self.invoke(), "break")[1])
 
     def resize(self, width: int, height: int, font_size: int):
+        width -= width % 2            # even width: centres exactly on the window's middle
         self.font_size = font_size
         self.configure(width=width, height=height)
         self._draw()
@@ -152,7 +153,9 @@ class HomeScreen(ttk.Frame):
     """Main menu. `app` provides: show_study, show_create, show_profiles, sign_out,
     and the deck dropdown handlers (_on_home_deck)."""
 
-    BASE = {"btn_w": 436, "btn_h": 198, "btn_font": 40, "stat_font": 26, "gap": 150, "btn_gap": 26}
+    # full-size measurements (scaled down in small windows). Buttons are 75% of the
+    # original mockup size (436 x 198, 40 pt); "gap" is the space between the stats and Study.
+    BASE = {"btn_w": 327, "btn_h": 149, "btn_font": 30, "stat_font": 26, "gap": 120, "btn_gap": 22}
 
     def __init__(self, parent, app):
         super().__init__(parent)
