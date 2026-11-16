@@ -43,8 +43,15 @@ DESIGN_W, DESIGN_H = 1200, 1500
 
 HEAD_FONT, BODY_FONT = "Tahoma", "Segoe UI"
 HEAD_FILL, HEAD_EDGE = "#dadada", "#6b6b6b"     # headings: light grey with a grey outline
-PANEL = (16, 17, 19)                            # the stats box
+PANEL_SHADE = 0.67                              # the stats box: the picture behind it, this bright
 BTN_FACE, BTN_EDGE = "#323335", "#eaeaea"
+
+# parts of the background picture (design px): the page colour, the dotted band
+# with its line and shadow, the box holding the A / あ, and the corner stripes
+BASE = (30, 31, 34)
+HEADER_H = 345
+GLYPH_BOX = (520, 430, 1020, 960)
+STRIPES_BOX = (0, 400, 1040, 1500)
 
 # vertical centre (design px) of each group; a group keeps its shape when the
 # window isn't 4:5 and only its centre moves
@@ -219,7 +226,10 @@ class HomeScreen(ttk.Frame):
             bw, bh = max(round(px1 - px0), 2), max(round(py1 - py0), 2)
             mask = Image.new("L", (bw * k, bh * k), 0)
             ImageDraw.Draw(mask).rounded_rectangle((0, 0, bw * k - 1, bh * k - 1), radius=26 * s * k, fill=255)
-            img.paste(PANEL, (round(px0), round(py0)), mask.resize((bw, bh), Image.LANCZOS))
+            # translucent: the picture shows through, darkened (measured from the design)
+            box = (round(px0), round(py0), round(px0) + bw, round(py0) + bh)
+            dark = img.crop(box).point(lambda v: max(int(v * PANEL_SHADE - 4), 0))
+            img.paste(dark, box[:2], mask.resize((bw, bh), Image.LANCZOS))
             self._bg_img = ImageTk.PhotoImage(img)
             c.itemconfigure("bg", image=self._bg_img)
             c.delete("panel")
@@ -275,25 +285,38 @@ class HomeScreen(ttk.Frame):
             self._place_outlined(f"txt_{key}", x, y - 10 * s, (HEAD_FONT, px(66), "bold"), 2 * s)
             self._show_button(key)
 
+    def _layers(self):
+        """Cut the background picture into its three parts (once)."""
+        if getattr(self, "_parts", None) is None:
+            src = self.bg_src
+            stripes = src.crop(STRIPES_BOX)
+            gx0, gy0, gx1, gy1 = GLYPH_BOX        # blank the letters out of the stripes part
+            stripes.paste(BASE, (gx0 - STRIPES_BOX[0], gy0 - STRIPES_BOX[1],
+                                 gx1 - STRIPES_BOX[0], gy1 - STRIPES_BOX[1]))
+            self._parts = (src.crop((0, 0, DESIGN_W, HEADER_H)), src.crop(GLYPH_BOX), stripes)
+        return self._parts
+
     def _compose(self, w: int, h: int, sy: float):
-        """The background at the window's size. The picture keeps its shape
-        (scaled to the window's height). Narrower window: its sides are cut off."""
-        bw = max(round(DESIGN_W * sy), 1)
-        true = self.bg_src.resize((bw, h), Image.LANCZOS)
-        if w <= bw + 2:
-            x0 = max((bw - w) // 2, 0)
-            return true.crop((x0, 0, x0 + w, h))
-        # wider: stretch only the outer strips of the picture (they hold no
-        # watermark letters), so the middle isn't distorted or repeated
-        strip = 170                                   # design px taken from each side
-        sw = round(strip * sy)
-        ox = (w - bw) // 2
-        img = Image.new("RGB", (w, h))
-        img.paste(true, (ox, 0))
-        left = self.bg_src.crop((0, 0, strip, DESIGN_H)).resize((ox + sw, h), Image.BILINEAR)
-        right = self.bg_src.crop((DESIGN_W - strip, 0, DESIGN_W, DESIGN_H)).resize((w - ox - bw + sw, h), Image.BILINEAR)
-        img.paste(left, (0, 0))
-        img.paste(right, (ox + bw - sw, 0))
+        """The background at the window's size. Nothing is stretched: every
+        part keeps its shape and is scaled with the window's height only.
+          - dots band: starts at the left; in a wider window it repeats
+            (each repeat mirrored, so the dots join without a seam)
+          - A / あ: stay where they are, behind the middle of the menu
+          - stripes: stay in the bottom-left corner"""
+        header, glyphs, stripes = self._layers()
+        scale = lambda im: im.resize((max(round(im.width * sy), 1), max(round(im.height * sy), 1)),  # noqa: E731
+                                     Image.LANCZOS)
+        img = Image.new("RGB", (w, h), BASE)
+        stripes = scale(stripes)
+        img.paste(stripes, (0, h - stripes.height))
+        glyphs = scale(glyphs)
+        img.paste(glyphs, (round(w / 2 + (GLYPH_BOX[0] - DESIGN_W / 2) * sy), round(GLYPH_BOX[1] * sy)))
+        header = scale(header)
+        x, flipped = 0, False
+        while x < w:
+            img.paste(header.transpose(Image.FLIP_LEFT_RIGHT) if flipped else header, (x, 0))
+            x += header.width
+            flipped = not flipped
         return img
 
     # ------------------------------------------------------------ data
