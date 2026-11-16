@@ -51,7 +51,7 @@ BTN_FACE, BTN_EDGE = "#323335", "#eaeaea"
 BASE = (30, 31, 34)
 LINE_Y, HEADER_H = 300, 345                     # dots end / white line starts; shadow ends
 GLYPH_BOX = (520, 430, 1020, 960)
-GLYPH_FULL_SCREEN = 0.85                        # where the A / あ centre sits in a full-screen-wide window
+GLYPH_FULL_SCREEN = 0.80                        # where the A / あ centre sits in a full-screen-wide window
 STRIPES_BOX = (0, 400, 1040, 1500)
 
 # vertical centre (design px) of each group; a group keeps its shape when the
@@ -317,7 +317,7 @@ class HomeScreen(ttk.Frame):
         img.paste(stripes, (0, h - stripes.height))
         glyphs = scale(glyphs)
         # their centre: where the design has it (64% across) in a 4:5 window, moving
-        # right as the window widens, to 85% across at the full width of the screen;
+        # right as the window widens, to 80% across at the full width of the screen;
         # never outside the window
         home = (GLYPH_BOX[0] + GLYPH_BOX[2]) / 2 / DESIGN_W
         narrow, full = DESIGN_W * sy, self.winfo_screenwidth()
