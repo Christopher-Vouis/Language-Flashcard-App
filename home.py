@@ -51,6 +51,7 @@ BTN_FACE, BTN_EDGE = "#323335", "#eaeaea"
 BASE = (30, 31, 34)
 LINE_Y, HEADER_H = 300, 345                     # dots end / white line starts; shadow ends
 GLYPH_BOX = (520, 430, 1020, 960)
+GLYPH_FULL_SCREEN = 0.75                        # where the A / あ centre sits in a full-screen-wide window
 STRIPES_BOX = (0, 400, 1040, 1500)
 
 # vertical centre (design px) of each group; a group keeps its shape when the
@@ -305,7 +306,8 @@ class HomeScreen(ttk.Frame):
         part keeps its shape and is scaled with the window's height only.
           - dots band: starts at the left; a wider window shows more of it
             (it is 3840 px wide; beyond that it repeats, mirrored)
-          - A / あ: stay where they are, behind the middle of the menu
+          - A / あ: keep their shape, always inside the window; they drift to
+            the right as the window widens (see below)
           - stripes: stay in the bottom-left corner"""
         dots, line, glyphs, stripes = self._layers()
         scale = lambda im: im.resize((max(round(im.width * sy), 1), max(round(im.height * sy), 1)),  # noqa: E731
@@ -314,7 +316,15 @@ class HomeScreen(ttk.Frame):
         stripes = scale(stripes)
         img.paste(stripes, (0, h - stripes.height))
         glyphs = scale(glyphs)
-        img.paste(glyphs, (round(w / 2 + (GLYPH_BOX[0] - DESIGN_W / 2) * sy), round(GLYPH_BOX[1] * sy)))
+        # their centre: where the design has it (64% across) in a 4:5 window, moving
+        # right as the window widens, to 75% across at the full width of the screen;
+        # never outside the window
+        home = (GLYPH_BOX[0] + GLYPH_BOX[2]) / 2 / DESIGN_W
+        narrow, full = DESIGN_W * sy, self.winfo_screenwidth()
+        t = min(max((w - narrow) / (full - narrow), 0), 1) if full > narrow else 1
+        centre = (home + (GLYPH_FULL_SCREEN - home) * t) * w
+        gx = min(max(round(centre - glyphs.width / 2), 0), max(w - glyphs.width, 0))
+        img.paste(glyphs, (gx, round(GLYPH_BOX[1] * sy)))
         band_h = max(round(LINE_Y * sy), 1)           # the white line starts right under the dots
         dots = dots.resize((max(round(dots.width * band_h / dots.height), 1), band_h), Image.LANCZOS)
         x, flipped = 0, False
