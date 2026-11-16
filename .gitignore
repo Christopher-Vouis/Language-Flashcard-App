@@ -15,6 +15,10 @@ profiles.json
 *.mov
 *.webm
 
+# The app's own artwork (main menu background and button) does belong in the repo.
+!assets/
+!assets/*.png
+
 # --- Local environment
 .venv/
 __pycache__/

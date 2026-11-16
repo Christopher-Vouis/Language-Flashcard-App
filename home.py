@@ -1,261 +1,305 @@
 """
-The main menu screen.
+The main menu screen, drawn on one canvas over assets/menu_bg.png.
 
-    ┌────────────────────────────────────────────────────────────────┐
-    │ Welcome, <profile>                         Deck: [ deck ▾ ]    │  header
-    │ Change | Sign Out                                  [View / Edit]│
-    ├─── gradient band, black bar, soft shadow ──────────────────────┤
-    │                      New:      0                               │
-    │                      Due:      0                               │  centred
-    │                      Total:    0                               │  column
-    │                    ┌──────────────┐                            │
-    │                    │    Study     │                            │
-    │                    └──────────────┘                            │
-    │                    ┌──────────────┐                            │
-    │                    │    Create    │                            │
-    │                    └──────────────┘                            │
-    └────────────────────────────────────────────────────────────────┘
+The design is 1200 x 1500 (the size of the background picture); every position
+and size below is in those design pixels and is scaled to the window:
 
-The header band and the bevelled buttons are drawn on canvases (Tk has no
-gradients). Everything in the lower part sits in one column that is centred
-horizontally and scales with the window.
+    Welcome, <profile>                                  header (over the dotted band)
+    change | sign out
+    ─────────────────────────────────────────────────  (line is part of the picture)
+                        Deck:
+                   <current deck name>
+                 ┌────────────────────┐
+                 │  New:           #  │
+                 │  Due:           #  │
+                 │  Total:         #  │
+                 └────────────────────┘
+                 Change Deck | Edit Deck
+
+              ┌──────────┐ ┌──────────┐
+              │  Study   │ │  Create  │
+              └──────────┘ └──────────┘
+
+The picture, the stats panel and the buttons are composed with Pillow (Tk has
+no anti-aliased shapes); the text is drawn by Tk so it stays sharp.
 """
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from tkinter import ttk
 
 import theme
+from cards import ALL
 
-# colours sampled from the mockup
-HEADER_BG = theme.BG
-BAND_TOP, BAND_BOTTOM = theme.BG, "#3b4249"      # lighter steel strip under the header
-BAR = "#060708"                                  # black bar
-FACE, FACE_HOVER, FACE_PRESS = "#2d3035", "#363a40", "#25282c"
-EDGE_OUTER, EDGE_INNER = "#0b0c0e", "#16181b"    # bevel: darkest at the rim
+try:
+    from PIL import Image, ImageDraw, ImageEnhance, ImageTk
+except ImportError:  # no Pillow: plain background, drawn buttons
+    Image = None
 
+ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+DESIGN_W, DESIGN_H = 1200, 1500
 
-def _mix(c1: str, c2: str, t: float) -> str:
-    """Colour between c1 and c2 (t = 0..1)."""
-    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
-    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
-    return "#" + "".join(f"{round(x + (y - x) * t):02x}" for x, y in zip(a, b))
+HEAD_FONT, BODY_FONT = "Tahoma", "Segoe UI"
+HEAD_FILL, HEAD_EDGE = "#dadada", "#6b6b6b"     # headings: light grey with a grey outline
+PANEL = (16, 17, 19)                            # the stats box
+BTN_FACE, BTN_EDGE = "#323335", "#eaeaea"
 
-
-class HeaderBand(tk.Canvas):
-    """The strip under the header: gradient, black bar, then a shadow fading into the page."""
-
-    def __init__(self, parent, scale_h: int = 64):
-        super().__init__(parent, height=scale_h, highlightthickness=0, background=theme.BG, bd=0)
-        self.bind("<Configure>", lambda e: self._draw())
-
-    def _draw(self):
-        self.delete("all")
-        w, h = self.winfo_width(), self.winfo_height()
-        grad, bar = int(h * 0.55), max(int(h * 0.1), 4)
-        for y in range(grad):                                     # header → steel
-            self.create_line(0, y, w, y, fill=_mix(BAND_TOP, BAND_BOTTOM, (y / grad) ** 1.6))
-        self.create_rectangle(0, grad, w, grad + bar, fill=BAR, outline=BAR)
-        shadow = h - grad - bar
-        for i in range(shadow):                                   # black → page
-            y = grad + bar + i
-            self.create_line(0, y, w, y, fill=_mix(BAR, theme.BG, (i / max(shadow, 1)) ** 0.6))
+# vertical centre (design px) of each group; a group keeps its shape when the
+# window isn't 4:5 and only its centre moves
+HEADER_Y, DECK_Y, BUTTONS_Y = 160, 600, 1150
 
 
-class BevelButton(tk.Canvas):
-    """A large button with a dark inset bevel, like the mockup's Study / Create.
-    Hover / pressed states, keyboard focus (Tab), Enter or Space to press."""
-
-    def __init__(self, parent, text: str, command, width: int = 327, height: int = 149,
-                 font_size: int = 30):
-        super().__init__(parent, width=width, height=height, highlightthickness=0, bd=0,
-                         background=theme.BG, takefocus=True, cursor="hand2")
-        self.text, self.command = text, command
-        self.font_size = font_size
-        # hover and "mouse button held down" are tracked separately, so the
-        # Leave/Enter events some systems send when a click starts can't cancel it
-        self._hover = False
-        self._down = False
-        self.bind("<Configure>", lambda e: self._draw())
-        self.bind("<Enter>", lambda e: self._set_hover(True))
-        self.bind("<Leave>", lambda e: self._set_hover(False))
-        self.bind("<ButtonPress-1>", self._press)
-        self.bind("<B1-Motion>", self._motion)
-        self.bind("<ButtonRelease-1>", self._release)
-        self.bind("<FocusIn>", lambda e: self._draw())
-        self.bind("<FocusOut>", lambda e: self._draw())
-        self.bind("<Return>", lambda e: self.invoke())
-        self.bind("<space>", lambda e: (self.invoke(), "break")[1])
-
-    def resize(self, width: int, height: int, font_size: int):
-        width -= width % 2            # even width: centres exactly on the window's middle
-        self.font_size = font_size
-        self.configure(width=width, height=height)
-        self._draw()
-
-    def invoke(self):
-        if self.command:
-            self.command()
-
-    @property
-    def state(self) -> str:
-        if self._down and self._hover:
-            return "pressed"
-        return "hover" if self._hover else "normal"
-
-    def _inside(self, e) -> bool:
-        return 0 <= e.x < self.winfo_width() and 0 <= e.y < self.winfo_height()
-
-    def _set_hover(self, on: bool):
-        self._hover = on
-        self._draw()
-
-    def _press(self, e):
-        self.focus_set()
-        self._down, self._hover = True, True
-        self._draw()
-
-    def _motion(self, e):
-        # while held: look pressed only when the pointer is over the button
-        inside = self._inside(e)
-        if inside != self._hover:
-            self._set_hover(inside)
-
-    def _release(self, e):
-        inside = self._inside(e)
-        was_down, self._down = self._down, False
-        self._hover = inside
-        self._draw()
-        if was_down and inside:     # released over the button = a click
-            self.invoke()
-
-    def _draw(self):
-        self.delete("all")
-        w, h = self.winfo_width(), self.winfo_height()
-        if w < 4 or h < 4:
-            return
-        face = {"normal": FACE, "hover": FACE_HOVER, "pressed": FACE_PRESS}[self.state]
-        self.create_rectangle(0, 0, w - 1, h - 1, fill=EDGE_OUTER, outline=EDGE_OUTER)
-        bevel = max(int(min(w, h) * 0.055), 5)
-        for i in range(bevel):                    # dark rim easing into the face
-            c = _mix(EDGE_INNER, face, (i / bevel) ** 0.8)
-            self.create_rectangle(2 + i, 2 + i, w - 3 - i, h - 3 - i, outline=c, fill=c)
-        self.create_rectangle(2 + bevel, 2 + bevel, w - 3 - bevel, h - 3 - bevel, fill=face, outline=face)
-        if self.focus_get() is self:              # keyboard focus ring
-            self.create_rectangle(1, 1, w - 2, h - 2, outline=theme.ACCENT, width=2)
-        shift = 1 if self.state == "pressed" else 0
-        self.create_text(w / 2 + shift, h / 2 + shift, text=self.text, fill="#ffffff",
-                         font=("Segoe UI", self.font_size, "bold"))
+def _load(name: str):
+    if Image is None:
+        return None
+    try:
+        return Image.open(os.path.join(ASSETS, name)).convert("RGB")
+    except OSError:
+        return None
 
 
 class HomeScreen(ttk.Frame):
-    """Main menu. `app` provides: show_study, show_create, show_profiles, sign_out, show_deck,
-    and the deck dropdown handlers (_on_home_deck)."""
-
-    # full-size measurements (scaled down in small windows). Buttons are 75% of the
-    # original mockup size (436 x 198, 40 pt); "gap" is the space between the stats and Study.
-    BASE = {"btn_w": 327, "btn_h": 149, "btn_font": 30, "stat_font": 26, "gap": 120, "btn_gap": 22}
+    """Main menu. `app` provides: show_study, show_create, show_profiles, sign_out,
+    show_deck, choose_deck, new_deck, rename_deck, delete_deck and `cards`."""
 
     def __init__(self, parent, app):
         super().__init__(parent)
         self.app = app
+        self.bg_src = _load("menu_bg.png")
+        self.btn_src = _load("menu_button.png")
+        self._bg_img = None
+        self._btn_imgs: dict[str, object] = {}
+        self._size = (0, 0)
+        self._job = None
+        self._btn_state = {"study": "normal", "create": "normal"}
+        self._down: str | None = None
 
-        # ---------------- header
-        header = tk.Frame(self, background=HEADER_BG, height=118)
-        header.pack(fill="x")
-        header.pack_propagate(False)
-        left = tk.Frame(header, background=HEADER_BG)
-        left.place(x=46, y=40)
-        self.welcome_var = tk.StringVar()
-        tk.Label(left, textvariable=self.welcome_var, background=HEADER_BG, foreground="#ffffff",
-                 font=("Segoe UI", 20, "bold")).pack(anchor="w")
-        links = tk.Frame(left, background=HEADER_BG)
-        links.pack(anchor="w", pady=(4, 0))
-        self._link(links, "Change", app.show_profiles).pack(side="left")
-        tk.Label(links, text="|", background=HEADER_BG, foreground=theme.FG,
-                 font=("Segoe UI", 12)).pack(side="left", padx=5)
-        self._link(links, "Sign Out", app.sign_out).pack(side="left")
+        self.canvas = c = tk.Canvas(self, highlightthickness=0, bd=0, background=theme.BG)
+        c.pack(fill="both", expand=True)
+        c.create_image(0, 0, anchor="nw", tags="bg")
 
-        right = tk.Frame(header, background=HEADER_BG)
-        right.place(relx=1.0, x=-36, y=30, anchor="ne")
-        deck_row = tk.Frame(right, background=HEADER_BG)
-        deck_row.pack(anchor="e")
-        tk.Label(deck_row, text="Deck:", background=HEADER_BG, foreground=theme.FG,
-                 font=("Segoe UI", 11)).pack(side="left", padx=(0, 8))
-        self.deck_var = tk.StringVar()
-        self.deck_combo = ttk.Combobox(deck_row, textvariable=self.deck_var, state="readonly",
-                                       width=28, font=("Segoe UI", 11))
-        self.deck_combo.pack(side="left")
-        # under the dropdown: open the View Deck window for the chosen deck
-        self.view_deck_btn = ttk.Button(right, text="View / Edit", command=app.show_deck, takefocus=False)
-        self.view_deck_btn.pack(anchor="e", pady=(8, 0))
-        self.deck_combo.bind("<<ComboboxSelected>>", app._on_home_deck)
-        HeaderBand(self, 70).pack(fill="x")
+        # ---- header
+        self._outlined("welcome", anchor="w")
+        self._link("change", "change", app.show_profiles)
+        c.create_text(0, 0, text="|", fill="#ffffff", anchor="w", tags="bar1")
+        self._link("signout", "sign out", app.sign_out)
 
-        # ---------------- centred column: stats, then the two buttons
-        self.body = ttk.Frame(self)
-        self.body.pack(fill="both", expand=True)
-        self.column = ttk.Frame(self.body)
-        self.column.place(relx=0.5, rely=0.46, anchor="center")   # centred horizontally
+        # ---- deck block
+        self._outlined("deck_title", text="Deck:")
+        c.create_text(0, 0, fill="#ffffff", tags="deck_name")
+        for name in ("New", "Due", "Total"):
+            c.create_text(0, 0, text=f"{name}:", fill="#ffffff", anchor="w", tags=f"lbl_{name}")
+            c.create_text(0, 0, text="0", fill="#ffffff", anchor="e", tags=f"val_{name}")
+        self._link("change_deck", "Change Deck", self.change_deck)
+        c.create_text(0, 0, text="|", fill="#ffffff", tags="bar2")
+        self._link("edit_deck", "Edit Deck", app.show_deck)
 
-        stats = ttk.Frame(self.column)
-        stats.pack()                                              # centred in the column
-        self.stat_vars = {}
-        self.stat_labels = []
-        for r, name in enumerate(("New", "Due", "Total")):
-            var = tk.StringVar(value="0")
-            self.stat_vars[name] = var
-            a = ttk.Label(stats, text=f"{name}:", foreground="#ffffff")
-            b = ttk.Label(stats, textvariable=var, foreground="#ffffff", anchor="e", width=4)
-            a.grid(row=r, column=0, sticky="w")
-            b.grid(row=r, column=1, sticky="e", padx=(70, 0))
-            self.stat_labels += [a, b]
+        # ---- buttons
+        for key, text, command in (("study", "Study", app.show_study), ("create", "Create", app.show_create)):
+            c.create_image(0, 0, tags=(f"btn_{key}", f"hit_{key}"))
+            c.create_rectangle(0, 0, 0, 0, fill=BTN_FACE, outline=BTN_EDGE, width=2,
+                               state="hidden", tags=(f"box_{key}", f"hit_{key}"))  # without Pillow
+            self._outlined(f"txt_{key}", text=text, extra=(f"hit_{key}",))
+            c.tag_bind(f"hit_{key}", "<Enter>", lambda e, k=key: self._hover(k, True))
+            c.tag_bind(f"hit_{key}", "<Leave>", lambda e, k=key: self._hover(k, False))
+            c.tag_bind(f"hit_{key}", "<ButtonPress-1>", lambda e, k=key: self._press(k))
+            c.tag_bind(f"hit_{key}", "<ButtonRelease-1>", lambda e, k=key, cmd=command: self._release(k, cmd))
 
-        self.spacer = ttk.Frame(self.column, height=self.BASE["gap"])
-        self.spacer.pack()
-        self.study_btn = BevelButton(self.column, "Study", app.show_study)
-        self.study_btn.pack()
-        self.btn_gap = ttk.Frame(self.column, height=self.BASE["btn_gap"])
-        self.btn_gap.pack()
-        self.create_btn = BevelButton(self.column, "Create", app.show_create)
-        self.create_btn.pack()
+        c.bind("<Configure>", self._on_configure)
 
-        self.body.bind("<Configure>", self._fit)
-        self._fit()
+    # ------------------------------------------------------------ items
+    def _outlined(self, tag: str, text: str = "", anchor: str = "center", extra: tuple = ()):
+        """Heading text: 8 grey copies around a light one = an outline."""
+        for i in range(8):
+            self.canvas.create_text(0, 0, text=text, fill=HEAD_EDGE, anchor=anchor,
+                                    tags=(tag, f"{tag}_edge{i}") + extra)
+        self.canvas.create_text(0, 0, text=text, fill=HEAD_FILL, anchor=anchor, tags=(tag, f"{tag}_top") + extra)
 
-    def _link(self, parent, text, command) -> tk.Label:
-        """A text link (white, underlined while the mouse is over it)."""
-        lbl = tk.Label(parent, text=text, background=HEADER_BG, foreground="#ffffff",
-                       font=("Segoe UI", 12), cursor="hand2")
-        lbl.bind("<Button-1>", lambda e: command())
-        lbl.bind("<Enter>", lambda e: lbl.configure(font=("Segoe UI", 12, "underline")))
-        lbl.bind("<Leave>", lambda e: lbl.configure(font=("Segoe UI", 12)))
-        return lbl
+    def _place_outlined(self, tag: str, x: float, y: float, font, edge: float):
+        c = self.canvas
+        c.itemconfigure(tag, font=font)
+        e = max(edge, 1)
+        d = e * 0.7
+        for i, (dx, dy) in enumerate(((-e, 0), (e, 0), (0, -e), (0, e), (-d, -d), (d, -d), (-d, d), (d, d))):
+            c.coords(f"{tag}_edge{i}", x + dx, y + dy)
+        c.coords(f"{tag}_top", x, y)
 
-    def _fit(self, _e=None):
-        """Scale the column to the space available (full size from ~760 px tall)."""
-        b = self.BASE
-        h = max(self.body.winfo_height(), 1)
-        w = max(self.body.winfo_width(), 1)
-        if h < 10:          # not laid out yet
-            s = 1.0
+    def _link(self, tag: str, text: str, command):
+        """White text that underlines under the mouse and runs `command` on a click."""
+        c = self.canvas
+        c.create_text(0, 0, text=text, fill="#ffffff", anchor="w", tags=(tag, "link"))
+        c.tag_bind(tag, "<Enter>", lambda e: self._link_hover(tag, True))
+        c.tag_bind(tag, "<Leave>", lambda e: self._link_hover(tag, False))
+        c.tag_bind(tag, "<Button-1>", lambda e: command())
+
+    def _link_hover(self, tag: str, on: bool):
+        size = self._link_px.get(tag, 14)
+        self.canvas.itemconfigure(tag, font=(BODY_FONT, -size, "underline" if on else "normal"))
+        self.canvas.configure(cursor="hand2" if on else "")
+
+    _link_px: dict = {}
+
+    # ------------------------------------------------------------ buttons
+    def _show_button(self, key: str):
+        img = self._btn_imgs.get(self._btn_state[key])
+        if img is not None:
+            self.canvas.itemconfigure(f"btn_{key}", image=img)
         else:
-            s = max(min(h / 820, w / 640, 1.0), 0.45)
-        self.study_btn.resize(int(b["btn_w"] * s), int(b["btn_h"] * s), max(int(b["btn_font"] * s), 14))
-        self.create_btn.resize(int(b["btn_w"] * s), int(b["btn_h"] * s), max(int(b["btn_font"] * s), 14))
-        font = ("Segoe UI", max(int(b["stat_font"] * s), 12))
-        for lbl in self.stat_labels:
-            lbl.configure(font=font)
-        self.spacer.configure(height=int(b["gap"] * s))
-        self.btn_gap.configure(height=int(b["btn_gap"] * s))
+            face = {"normal": BTN_FACE, "hover": "#3c3d40", "pressed": "#28292b"}[self._btn_state[key]]
+            self.canvas.itemconfigure(f"box_{key}", fill=face)
 
-    def update_view(self, profile_name: str, deck_labels: list[str], current: int,
-                    new: int, due: int, total: int):
-        self.welcome_var.set(f"Welcome, {profile_name}")
-        self.deck_combo.configure(values=deck_labels)
-        if 0 <= current < len(deck_labels):
-            self.deck_combo.current(current)
-        self.stat_vars["New"].set(str(new))
-        self.stat_vars["Due"].set(str(due))
-        self.stat_vars["Total"].set(str(total))
+    def _hover(self, key: str, on: bool):
+        self._btn_state[key] = ("pressed" if self._down == key else "hover") if on else "normal"
+        self.canvas.configure(cursor="hand2" if on else "")
+        self._show_button(key)
+
+    def _press(self, key: str):
+        self._down = key
+        self._btn_state[key] = "pressed"
+        self._show_button(key)
+
+    def _release(self, key: str, command):
+        was_down, self._down = self._down == key, None
+        inside = self._btn_state[key] == "pressed"       # still over the button
+        self._btn_state[key] = "hover" if inside else "normal"
+        self._show_button(key)
+        if was_down and inside:
+            command()
+
+    # ------------------------------------------------------------ deck menu
+    def change_deck(self):
+        """Change Deck: a menu of the decks, then New / Rename / Delete."""
+        app, cards = self.app, self.app.cards
+        menu = tk.Menu(self, tearoff=False)
+        current = tk.StringVar(value=cards.selected_deck if cards.deck(cards.selected_deck) else ALL)
+        for deck_id in [ALL] + [d["id"] for d in cards.decks]:
+            menu.add_radiobutton(label=f"{cards.deck_name(deck_id)}  ({len(cards.cards_in(deck_id))})",
+                                 variable=current, value=deck_id,
+                                 command=lambda i=deck_id: app.choose_deck(i))
+        menu.add_separator()
+        menu.add_command(label="＋  New deck...", command=app.new_deck)
+        menu.add_command(label="✎  Rename this deck...", command=app.rename_deck)
+        menu.add_command(label="✕  Delete this deck...", command=app.delete_deck)
+        self._deck_menu, self._deck_menu_var = menu, current     # keep them alive while shown
+        x0, _y0, _x1, y1 = self.canvas.bbox("change_deck")
+        menu.tk_popup(self.canvas.winfo_rootx() + x0, self.canvas.winfo_rooty() + y1 + 4)
+
+    # ------------------------------------------------------------ layout
+    def _on_configure(self, _e=None):
+        if self._job:
+            self.after_cancel(self._job)
+        # first draw at once; while the window is being dragged, wait for it to settle
+        self._job = self.after(1 if self._size == (0, 0) else 40, self._render)
+
+    def _render(self):
+        self._job = None
+        c = self.canvas
+        w, h = c.winfo_width(), c.winfo_height()
+        if w < 20 or h < 20:
+            return
+        self._size = (w, h)
+        sy = h / DESIGN_H
+        s = min(w / DESIGN_W, sy)                 # size of everything
+        cx = w / 2
+
+        def at(x, y, group):                      # design point -> canvas point (centred groups)
+            return cx + (x - DESIGN_W / 2) * s, group * sy + (y - group) * s
+
+        def px(n):                                # design pixels -> font size (negative = pixels)
+            return -max(round(n * s), 8)
+
+        # ---- picture: background + stats panel
+        px0, py0 = at(301, 498, DECK_Y)
+        px1, py1 = at(901, 797, DECK_Y)
+        if self.bg_src is not None:
+            img = self._compose(w, h, sy)
+            k = 3                                 # draw the rounded box 3x and shrink = smooth corners
+            bw, bh = max(round(px1 - px0), 2), max(round(py1 - py0), 2)
+            mask = Image.new("L", (bw * k, bh * k), 0)
+            ImageDraw.Draw(mask).rounded_rectangle((0, 0, bw * k - 1, bh * k - 1), radius=26 * s * k, fill=255)
+            img.paste(PANEL, (round(px0), round(py0)), mask.resize((bw, bh), Image.LANCZOS))
+            self._bg_img = ImageTk.PhotoImage(img)
+            c.itemconfigure("bg", image=self._bg_img)
+            c.delete("panel")
+        else:
+            c.delete("panel")
+            c.create_rectangle(px0, py0, px1, py1, fill="#101113", outline="", tags="panel")
+            c.tag_raise("panel", "bg")
+
+        # ---- header (kept at the left edge)
+        hy = lambda y: HEADER_Y * sy + (y - HEADER_Y) * s      # noqa: E731
+        self._place_outlined("welcome", 33 * s, hy(139), (HEAD_FONT, px(55), "bold"), 2 * s)
+        link = px(33)
+        self._link_px.update(change=-link, signout=-link)
+        x = 37 * s
+        for tag in ("change", "bar1", "signout"):
+            c.itemconfigure(tag, font=(BODY_FONT, link))
+            c.coords(tag, x, hy(204))
+            x = c.bbox(tag)[2] + 9 * s
+
+        # ---- deck block
+        self._place_outlined("deck_title", *at(593, 366, DECK_Y), (HEAD_FONT, px(55), "bold"), 2 * s)
+        c.itemconfigure("deck_name", font=(BODY_FONT, px(35)), width=max(w - 40, 100))
+        c.coords("deck_name", *at(600, 436, DECK_Y))
+        for name, y in (("New", 555), ("Due", 638), ("Total", 721)):
+            for tag, x in ((f"lbl_{name}", 388), (f"val_{name}", 811)):
+                c.itemconfigure(tag, font=(BODY_FONT, px(67)))
+                c.coords(tag, *at(x, y, DECK_Y))
+        link = px(30)
+        self._link_px.update(change_deck=-link, edit_deck=-link)
+        for tag in ("change_deck", "bar2", "edit_deck"):
+            c.itemconfigure(tag, font=(BODY_FONT, link), anchor="w")
+        gap = 8 * s
+        widths = [c.bbox(t)[2] - c.bbox(t)[0] for t in ("change_deck", "bar2", "edit_deck")]
+        x, y = at(601, 826, DECK_Y)
+        x -= (sum(widths) + 2 * gap) / 2
+        for tag, width in zip(("change_deck", "bar2", "edit_deck"), widths):
+            c.coords(tag, x, y)
+            x += width + gap
+
+        # ---- Study / Create
+        bw, bh = max(round(400 * s), 8), max(round(200 * s), 8)
+        if self.btn_src is not None:
+            base = self.btn_src.resize((bw, bh), Image.LANCZOS)
+            self._btn_imgs = {"normal": ImageTk.PhotoImage(base),
+                              "hover": ImageTk.PhotoImage(ImageEnhance.Brightness(base).enhance(1.22)),
+                              "pressed": ImageTk.PhotoImage(ImageEnhance.Brightness(base).enhance(0.8))}
+        for key, centre in (("study", 400), ("create", 826)):
+            x, y = at(centre, 1150, BUTTONS_Y)
+            c.coords(f"btn_{key}", x, y)
+            if self.btn_src is None:
+                c.itemconfigure(f"box_{key}", state="normal")
+                c.coords(f"box_{key}", x - bw / 2, y - bh / 2, x + bw / 2, y + bh / 2)
+            self._place_outlined(f"txt_{key}", x, y - 10 * s, (HEAD_FONT, px(66), "bold"), 2 * s)
+            self._show_button(key)
+
+    def _compose(self, w: int, h: int, sy: float):
+        """The background at the window's size. The picture keeps its shape
+        (scaled to the window's height). Narrower window: its sides are cut off."""
+        bw = max(round(DESIGN_W * sy), 1)
+        true = self.bg_src.resize((bw, h), Image.LANCZOS)
+        if w <= bw + 2:
+            x0 = max((bw - w) // 2, 0)
+            return true.crop((x0, 0, x0 + w, h))
+        # wider: stretch only the outer strips of the picture (they hold no
+        # watermark letters), so the middle isn't distorted or repeated
+        strip = 170                                   # design px taken from each side
+        sw = round(strip * sy)
+        ox = (w - bw) // 2
+        img = Image.new("RGB", (w, h))
+        img.paste(true, (ox, 0))
+        left = self.bg_src.crop((0, 0, strip, DESIGN_H)).resize((ox + sw, h), Image.BILINEAR)
+        right = self.bg_src.crop((DESIGN_W - strip, 0, DESIGN_W, DESIGN_H)).resize((w - ox - bw + sw, h), Image.BILINEAR)
+        img.paste(left, (0, 0))
+        img.paste(right, (ox + bw - sw, 0))
+        return img
+
+    # ------------------------------------------------------------ data
+    def update_view(self, profile_name: str, deck_name: str, new: int, due: int, total: int):
+        c = self.canvas
+        c.itemconfigure("welcome", text=f"Welcome, {profile_name}")
+        c.itemconfigure("deck_name", text=deck_name)
+        for name, value in (("New", new), ("Due", due), ("Total", total)):
+            c.itemconfigure(f"val_{name}", text=str(value))

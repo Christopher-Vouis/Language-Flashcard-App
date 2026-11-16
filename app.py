@@ -1234,8 +1234,11 @@ class App(tk.Tk):
     def __init__(self, initial_file: str | None = None):
         super().__init__()
         self.title("Language Flashcards")
-        self.geometry("1280x760")
-        self.minsize(900, 520)
+        # default size: the main menu's design is 1200 x 1500, so the window is 4:5
+        height = max(min(self.winfo_screenheight() - 130, 1000), 620)
+        width = round(height * 0.8)
+        self.geometry(f"{width}x{height}+{max((self.winfo_screenwidth() - width) // 2, 0)}+20")
+        self.minsize(600, 600)
         theme.apply(self)  # dark color scheme; must come before any widgets are built
 
         self.events: queue.Queue = queue.Queue()
@@ -1886,6 +1889,30 @@ class App(tk.Tk):
         self.home = HomeScreen(self.home_screen, self)
         self.home.pack(fill="both", expand=True)
 
+    CREATE_MIN_WIDTH = 1180   # the Create screen (table + preview) needs more room than the 4:5 menu
+
+    def _fit_window(self, screen: str):
+        """Widen the window for the Create screen, and put it back afterwards
+        (unless it was resized by hand in the meantime)."""
+        if self.state() != "normal":
+            return                                    # maximised: leave it
+        self.update_idletasks()
+        # position from geometry(): winfo_x/y would add the title and menu bars each time
+        size, x, y = self.geometry().replace("-", "+-").split("+", 2)
+        w, h = (int(v) for v in size.split("x"))
+        x, y = int(x.replace("+", "") or 0), int(y.replace("+", "") or 0)
+        widened = getattr(self, "_widened", None)     # (width before, width set)
+        if screen == "create":
+            if w < self.CREATE_MIN_WIDTH and not widened:
+                new_w = min(self.CREATE_MIN_WIDTH, self.winfo_screenwidth() - 20)
+                new_x = max(min(x - (new_w - w) // 2, self.winfo_screenwidth() - new_w - 10), 0)
+                self._widened = (w, new_w, x)
+                self.geometry(f"{new_w}x{h}+{new_x}+{y}")
+        elif widened:
+            self._widened = None
+            if abs(w - widened[1]) <= 2:              # still the width set above
+                self.geometry(f"{widened[0]}x{h}+{widened[2]}+{y}")
+
     def _show_screen(self, name: str):
         screens = {"home": self.home_screen, "create": self.create_screen, "study": self.study_screen,
                    "profiles": self.profiles_screen}
@@ -1897,6 +1924,7 @@ class App(tk.Tk):
             self.study_screen.leave()
         if self.current_screen:
             screens[self.current_screen].pack_forget()
+        self._fit_window(name)
         screens[name].pack(fill="both", expand=True)
         screens[name].focus_set()  # don't leave keyboard focus on a hidden screen's widget
         self.current_screen = name
@@ -2098,32 +2126,17 @@ class App(tk.Tk):
         self._show_screen("home")
 
     # ------------------------------------------------------------- decks
-    DECK_ACTIONS = (("＋  New deck...", "new"), ("✎  Rename this deck...", "rename"),
-                    ("✕  Delete this deck...", "delete"))
-
     def _update_home(self):
-        """Refresh the main menu: welcome line, deck dropdown, New / Due / Total."""
+        """Refresh the main menu: welcome line, deck name, New / Due / Total."""
         cards = self.cards
-        self._home_deck_ids = [ALL] + [d["id"] for d in cards.decks]
-        labels = [f"{cards.deck_name(i)}  ({len(cards.cards_in(i))})" for i in self._home_deck_ids]
-        labels += ["─" * 22] + [text for text, _ in self.DECK_ACTIONS]   # actions under a divider
-        current = cards.selected_deck if cards.selected_deck in self._home_deck_ids else ALL
+        current = cards.selected_deck if cards.deck(cards.selected_deck) else ALL
         n = cards.counts(current)
-        self.home.update_view(self.profile["name"], labels, self._home_deck_ids.index(current),
-                              n["new"], n["due"], n["total"])
+        self.home.update_view(self.profile["name"], cards.deck_name(current), n["new"], n["due"], n["total"])
 
-    def _on_home_deck(self, _event=None):
-        i = self.home.deck_combo.current()
-        n_decks = len(self._home_deck_ids)
-        if 0 <= i < n_decks:
-            self.cards.select_deck(self._home_deck_ids[i])
-            self.on_decks_changed()
-            return
-        self._update_home()          # put the dropdown back on the chosen deck first
-        action = i - n_decks - 1     # skip the divider line
-        if 0 <= action < len(self.DECK_ACTIONS):
-            {"new": self.new_deck, "rename": self.rename_deck,
-             "delete": self.delete_deck}[self.DECK_ACTIONS[action][1]]()
+    def choose_deck(self, deck_id: str):
+        """Main menu → Change Deck → a deck."""
+        self.cards.select_deck(deck_id)
+        self.on_decks_changed()
 
     def new_deck(self):
         deck = new_deck_dialog(self, self.cards)

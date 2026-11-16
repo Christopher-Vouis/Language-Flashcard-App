@@ -13,12 +13,13 @@ timestamped transcript. Built on [faster-whisper](https://github.com/SYSTRAN/fas
 
 Double-click **`run.bat`**. The app opens at the **main menu**:
 
-- **Welcome, <profile>** (top left) — **Change** opens the Profiles screen; **Sign Out** returns to it and
+- **Welcome, <profile>** (top left) — **change** opens the Profiles screen; **sign out** returns to it and
   locks the rest of the app until a profile signs in.
-- **Deck** (top right) — which deck to study (or **All cards**). The bottom of the same drop-down has
-  **＋ New deck...**, **✎ Rename this deck...** and **✕ Delete this deck...** (also in the **Cards** menu).
+- **Deck** — the name of the deck being studied, with its New / Due / Total.
+- **Change Deck** — a menu of your decks (and **All cards**); under them **＋ New deck...**,
+  **✎ Rename this deck...** and **✕ Delete this deck...** (also in the **Cards** menu).
   Deleting a deck never deletes its cards — they stay in All cards and their other decks.
-- **View / Edit** (under the Deck drop-down, or **Cards → View / edit current deck...**) — the **View Deck**
+- **Edit Deck** (or **Cards → View / edit current deck...**) — the **View Deck**
   window: the deck's cards with their status (New / Learning / Review) and when each is due.
   - **Add cards...** opens a list of all your cards (search, or filter by deck; ✓ = already in this deck):
     select some (Ctrl / Shift for several) and press **Add to deck**.
@@ -37,7 +38,7 @@ Switch screens any time with **Navigate → Main menu / Study / Create** (Ctrl+1
 ### Profiles
 
 - Each profile has its own **saved lines, cards and decks** (transcripts in `output\` are shared).
-- **Switch profile** (top right of the main menu) or **Navigate → Profiles** (Ctrl+4) opens the Profiles
+- **change** (under Welcome on the main menu) or **Navigate → Profiles** (Ctrl+4) opens the Profiles
   screen: **Sign in** (or double-click), **New profile...**, **Rename...**, **Delete...**.
 - **★ Make default** chooses the profile signed in automatically when the app starts;
   **No default (ask at startup)** makes the app open on the Profiles screen instead.
@@ -194,7 +195,9 @@ Command line alternative:
 - `cards.py` — the flashcard deck.
 - `srs.py` — spaced repetition: due dates and what Again / Hard / Correct do (the numbers are at the top).
 - `profiles.py` — user profiles and the default profile.
-- `home.py` — the main menu (header band and the large Study / Create buttons).
+- `home.py` — the main menu, drawn over `assets\menu_bg.png` (positions are in the picture's 1200 × 1500 pixels).
+- `assets\` — the main menu's background picture and its button picture. The window opens 4:5, the
+  shape of the background; it widens by itself for the Create screen and goes back afterwards.
 - `subtitles.py` — reads .srt / .vtt / .ass subtitle files as lines.
 - `theme.py` — the dark color scheme; every color is defined at the top, so it's easy to adjust.
 - `templates.py`, `card_view.py`, `template_editor.py` — card layouts: the data, drawing a card, and the drag-and-drop editor.
