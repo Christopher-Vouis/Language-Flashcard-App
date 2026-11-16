@@ -49,7 +49,7 @@ BTN_FACE, BTN_EDGE = "#323335", "#eaeaea"
 # parts of the background picture (design px): the page colour, the dotted band
 # with its line and shadow, the box holding the A / あ, and the corner stripes
 BASE = (30, 31, 34)
-HEADER_H = 345
+LINE_Y, HEADER_H = 300, 345                     # dots end / white line starts; shadow ends
 GLYPH_BOX = (520, 430, 1020, 960)
 STRIPES_BOX = (0, 400, 1040, 1500)
 
@@ -293,17 +293,21 @@ class HomeScreen(ttk.Frame):
             gx0, gy0, gx1, gy1 = GLYPH_BOX        # blank the letters out of the stripes part
             stripes.paste(BASE, (gx0 - STRIPES_BOX[0], gy0 - STRIPES_BOX[1],
                                  gx1 - STRIPES_BOX[0], gy1 - STRIPES_BOX[1]))
-            self._parts = (src.crop((0, 0, DESIGN_W, HEADER_H)), src.crop(GLYPH_BOX), stripes)
+            # dots: the wide band picture; the white line and its shadow are the
+            # same all the way across, so one column of them is enough
+            dots = _load("menu_dots.png") or src.crop((0, 0, DESIGN_W, LINE_Y))
+            line = src.crop((0, LINE_Y, 1, HEADER_H))
+            self._parts = (dots, line, src.crop(GLYPH_BOX), stripes)
         return self._parts
 
     def _compose(self, w: int, h: int, sy: float):
         """The background at the window's size. Nothing is stretched: every
         part keeps its shape and is scaled with the window's height only.
-          - dots band: starts at the left; in a wider window it repeats
-            (each repeat mirrored, so the dots join without a seam)
+          - dots band: starts at the left; a wider window shows more of it
+            (it is 3840 px wide; beyond that it repeats, mirrored)
           - A / あ: stay where they are, behind the middle of the menu
           - stripes: stay in the bottom-left corner"""
-        header, glyphs, stripes = self._layers()
+        dots, line, glyphs, stripes = self._layers()
         scale = lambda im: im.resize((max(round(im.width * sy), 1), max(round(im.height * sy), 1)),  # noqa: E731
                                      Image.LANCZOS)
         img = Image.new("RGB", (w, h), BASE)
@@ -311,12 +315,14 @@ class HomeScreen(ttk.Frame):
         img.paste(stripes, (0, h - stripes.height))
         glyphs = scale(glyphs)
         img.paste(glyphs, (round(w / 2 + (GLYPH_BOX[0] - DESIGN_W / 2) * sy), round(GLYPH_BOX[1] * sy)))
-        header = scale(header)
+        band_h = max(round(LINE_Y * sy), 1)           # the white line starts right under the dots
+        dots = dots.resize((max(round(dots.width * band_h / dots.height), 1), band_h), Image.LANCZOS)
         x, flipped = 0, False
         while x < w:
-            img.paste(header.transpose(Image.FLIP_LEFT_RIGHT) if flipped else header, (x, 0))
-            x += header.width
+            img.paste(dots.transpose(Image.FLIP_LEFT_RIGHT) if flipped else dots, (x, 0))
+            x += dots.width
             flipped = not flipped
+        img.paste(line.resize((w, max(round(line.height * sy), 1)), Image.LANCZOS), (0, band_h))
         return img
 
     # ------------------------------------------------------------ data

@@ -198,7 +198,8 @@ Command line alternative:
 - `home.py` — the main menu, drawn over `assets\menu_bg.png` (positions are in the picture's 1200 × 1500 pixels).
 - `assets\` — the main menu's background picture and its button picture. The window opens 4:5, the
   shape of the background; it widens by itself for the Create screen and goes back afterwards.
-  In other window shapes nothing is stretched: the dots band repeats across the top, the A / あ stay
+  In other window shapes nothing is stretched: a wider window shows more of the dots band
+  (`assets\menu_dots.png`, 3840 px wide), the A / あ stay
   behind the middle of the menu, and the stripes stay in the bottom-left corner.
 - `subtitles.py` — reads .srt / .vtt / .ass subtitle files as lines.
 - `theme.py` — the dark color scheme; every color is defined at the top, so it's easy to adjust.
