@@ -86,6 +86,22 @@ class SavedStore:
             self._write()
         return added, skipped
 
+    def get(self, entry_id: str) -> dict | None:
+        return next((e for e in self.entries if e["id"] == entry_id), None)
+
+    def set_text(self, entry_id: str, text: str) -> bool:
+        """Change a saved line's text (typed corrections). The text it was
+        saved with is kept as "original_text". Returns True if it changed."""
+        e = self.get(entry_id)
+        text = " ".join(text.split())
+        if e is None or not text or text == e["text"]:
+            return False
+        e.setdefault("original_text", e["text"])
+        e["text"] = text
+        e["edited_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        self._write()
+        return True
+
     def remove(self, ids) -> int:
         ids = set(ids)
         keep, gone = [], []

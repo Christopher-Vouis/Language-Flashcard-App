@@ -90,6 +90,60 @@ def ask_text(parent, title: str, prompt: str, initial: str = "") -> str | None:
     return dlg.result
 
 
+class LineTextDialog(tk.Toplevel):
+    """Modal dialog for correcting the text of one line (it can be long, so
+    this is a wrapping text box). Enter = OK, Esc = Cancel."""
+
+    def __init__(self, parent, title: str, text: str, note: str = ""):
+        super().__init__(parent)
+        self.title(title)
+        theme.dark_title_bar(self)
+        self.transient(parent)
+        self.minsize(420, 200)
+        self.result: str | None = None
+        body = ttk.Frame(self, padding=16)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Text of this line:").pack(anchor="w")
+        buttons = ttk.Frame(body)
+        buttons.pack(side="bottom", fill="x")
+        if note:
+            ttk.Label(body, text=note, foreground=theme.SUBTLE, wraplength=560,
+                      justify="left").pack(side="bottom", anchor="w", pady=(0, 12))
+        self.box = tk.Text(body, wrap="word", font=("Segoe UI", 13), width=56, height=5, undo=True)
+        self.box.pack(fill="both", expand=True, pady=(6, 12))
+        self.box.insert("1.0", text)
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(buttons, text="OK", command=self._ok).pack(side="right", padx=6)
+        ttk.Label(buttons, text="Enter: OK  ·  Esc: cancel", foreground=theme.SUBTLE).pack(side="left")
+        self.box.bind("<Return>", lambda e: (self._ok(), "break")[1])   # a line has no line breaks
+        self.box.bind("<KP_Enter>", lambda e: (self._ok(), "break")[1])
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.update_idletasks()
+        top = parent.winfo_toplevel()
+        x = top.winfo_rootx() + (top.winfo_width() - self.winfo_reqwidth()) // 2
+        y = top.winfo_rooty() + (top.winfo_height() - self.winfo_reqheight()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        self.box.focus_set()
+        self.box.mark_set("insert", "end-1c")
+        self.grab_set()
+
+    def _ok(self):
+        text = " ".join(self.box.get("1.0", "end").split())
+        if not text:
+            messagebox.showinfo("Edit text", "A line can't be empty. (To get rid of a line, "
+                                "untick it or delete it instead.)", parent=self)
+            return
+        self.result = text
+        self.destroy()
+
+
+def ask_line_text(parent, title: str, text: str, note: str = "") -> str | None:
+    """The corrected text, or None if cancelled."""
+    dlg = LineTextDialog(parent, title, text, note)
+    parent.wait_window(dlg)
+    return dlg.result
+
+
 def new_deck_dialog(parent, store: CardStore) -> dict | None:
     """Ask for a name and create a deck. Returns the deck, or None if cancelled."""
     name = ""
@@ -637,11 +691,34 @@ class SavedLinesWindow(RecordWindow):
 
     def add_actions(self, bar, menu):
         ttk.Button(bar, text="＋  New card...", command=self.new_card).pack(side="left")
+        ttk.Button(bar, text="✎  Edit text...", command=self.edit_text).pack(side="left", padx=(6, 0))
         menu.add_command(label="＋  New card...", command=self.new_card)
+        menu.add_command(label="✎  Edit text...", command=self.edit_text)
         self.tree.bind("<Return>", lambda e: self.new_card())
+        self.tree.bind("<F2>", lambda e: self.edit_text())
         self.bind("<Control-n>", lambda e: self.new_card())
-        ttk.Label(bar, text="Select a line, then New card (Enter / Ctrl+N)",
+        ttk.Label(bar, text="New card: Enter / Ctrl+N  ·  Edit text: F2",
                   foreground=theme.SUBTLE).pack(side="right", padx=10)
+
+    def edit_text(self):
+        """Correct the text of the selected saved line."""
+        e = self.focused()
+        if not e:
+            messagebox.showinfo("No line selected", "Select a saved line first.", parent=self)
+            return
+        n = self.app.cards.count_for_line(e["id"])
+        note = (f"{n} card{'s' if n != 1 else ''} already made from this line "
+                f"keep{'s' if n == 1 else ''} the old sentence.") if n else ""
+        old = e["text"]
+        new = ask_line_text(self, "Edit saved line", old, note)
+        if new is None or not self.app.store.set_text(e["id"], new):
+            return
+        self.app.saved_text_edited(e, old)       # the same line on the Create screen follows
+        self.app.on_saved_changed()
+        if self.tree.exists(e["id"]):
+            self.tree.selection_set([e["id"]])
+            self.tree.focus(e["id"])
+            self._on_select()
 
     def new_card(self):
         e = self.focused()
@@ -1245,6 +1322,7 @@ class App(tk.Tk):
         self.worker: threading.Thread | None = None
         self.stop_flag = threading.Event()
         self.transcript: tr.Transcript | None = None
+        self.out_dir = ""          # this transcript's folder in output\ (set when it's finished)
         self.started_at = 0.0
         self.music_used = False
         self._partial: list[tr.Segment] = []
@@ -1440,6 +1518,11 @@ class App(tk.Tk):
         self.tree.bind("<Button-1>", self._on_tree_click)
         self.tree.bind("<Shift-Button-1>", lambda e: self._on_tree_click(e, shift=True))
         self.tree.bind("<Return>", lambda e: self._toggle_focused())
+        self.tree.bind("<F2>", lambda e: self.edit_line())
+        self.line_menu = tk.Menu(self, tearoff=False)
+        self.line_menu.add_command(label="✎  Edit text...", command=self.edit_line, accelerator="F2")
+        self.line_menu.add_command(label="▶  Play", command=lambda: self.preview.play())
+        self.tree.bind("<Button-3>", self._line_context_menu)
         left.add(table_frame, weight=3)
 
         # selection bar under the table
@@ -1449,8 +1532,10 @@ class App(tk.Tk):
                                        command=self.save_selected, state="disabled")
         self.save_sel_btn.pack(side="left", padx=(6, 0))
         ttk.Button(selbar, text="View saved lines...", command=self.show_saved).pack(side="left", padx=6)
+        self.edit_line_btn = ttk.Button(selbar, text="✎  Edit text...", command=self.edit_line, state="disabled")
+        self.edit_line_btn.pack(side="left")
         ttk.Label(selbar, textvariable=self.sel_var, foreground=theme.MUTED).pack(side="left", padx=6)
-        ttk.Label(selbar, text="Tick boxes to choose lines · Shift-click a box for a range · Enter ticks",
+        ttk.Label(selbar, text="Tick boxes to choose lines · Shift-click a box for a range · Enter ticks · F2 edits",
                   foreground=theme.SUBTLE).pack(side="right")
 
         text_frame = ttk.Frame(left)
@@ -1631,6 +1716,7 @@ class App(tk.Tk):
 
     def _finish(self, result: tr.Transcript, out_dir: str, media_error):
         self.transcript = result
+        self.out_dir = out_dir
         if not self.stop_flag.is_set():
             self.progress["value"] = 1000
         elapsed = time.time() - self.started_at
@@ -1680,6 +1766,7 @@ class App(tk.Tk):
     # ------------------------------------------------------------- results
     def _clear_results(self):
         self.transcript = None
+        self.out_dir = ""
         self.tree.delete(*self.tree.get_children())
         self.text.delete("1.0", "end")
         self.progress["value"] = 0
@@ -1731,6 +1818,71 @@ class App(tk.Tk):
         self._show_preview(index)
         if self.autoplay_var.get() and event is not None:
             self.preview.play()
+
+    # --------------------------------------------------------- editing a line's text
+    def _line_context_menu(self, event):
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            return
+        self.tree.selection_set([iid])
+        self.tree.focus(iid)
+        self.line_menu.tk_popup(event.x_root, event.y_root)
+
+    def edit_line(self):
+        """Correct the text of the line shown in the preview (F2)."""
+        index = self._focused_index()
+        seg = self._segment(index) if index is not None else None
+        if seg is None:
+            return "break"
+        new = ask_line_text(self, f"Edit line {index + 1}", seg.text)
+        if new is None or new == seg.text:
+            return "break"
+        old = seg.text
+        self._set_line_text(seg, new)
+        # the same line in Saved lines (if it was saved) follows, so it keeps its ★
+        src = self._source_file()
+        changed = 0
+        for e in list(self.store.entries):
+            if SavedStore._key(e["source_file"], e["start"], e["end"], e["text"]) == \
+                    SavedStore._key(src, seg.start, seg.end, old):
+                changed += self.store.set_text(e["id"], new)
+        if changed:
+            self.on_saved_changed()
+        self.status_var.set(f"Line {index + 1} edited" + (" (also updated in Saved lines)." if changed else "."))
+        return "break"
+
+    def _source_file(self) -> str:
+        return self.transcript.source_file if self.transcript else self.file_var.get()
+
+    def _set_line_text(self, seg: tr.Segment, text: str):
+        """Put new text on a transcribed line: table, full transcript, preview,
+        and the transcript files in the output folder."""
+        seg.text = text
+        iid = str(seg.index)
+        if self.tree.exists(iid):
+            self.tree.set(iid, "text", text)
+        self._refresh_text()
+        if self._focused_index() == seg.index:
+            self._show_preview(seg.index)
+        if self.transcript and self.out_dir:      # (while still transcribing, the files are written at the end)
+            base = os.path.basename(self.out_dir)
+            try:
+                for ext in (".json", ".srt", ".txt"):
+                    self.transcript.save(os.path.join(self.out_dir, base + ext))
+            except OSError as e:
+                messagebox.showwarning("Edit text", f"The line was changed, but the transcript files "
+                                       f"couldn't be updated:\n\n{e}", parent=self)
+
+    def saved_text_edited(self, entry: dict, old_text: str):
+        """A saved line's text was edited: the same line of the transcript
+        that's open on the Create screen (if any) gets the new text too."""
+        if not self._segments():
+            return
+        key = SavedStore._key(entry["source_file"], entry["start"], entry["end"], old_text)
+        src = self._source_file()
+        for seg in self._segments():
+            if SavedStore._key(src, seg.start, seg.end, seg.text) == key:
+                self._set_line_text(seg, entry["text"])
 
     def _highlight_selection(self):
         """Full transcript: ticked lines in light blue, the previewed line in yellow."""
@@ -1811,6 +1963,8 @@ class App(tk.Tk):
         ready = self.transcript is not None and not (self.worker and self.worker.is_alive())
         self.save_sel_btn.config(state="normal" if ready and n else "disabled")
         self.sel_var.set(f"{n} selected" if n else "")
+        if getattr(self, "edit_line_btn", None):
+            self.edit_line_btn.config(state="normal" if self._focused_index() is not None else "disabled")
 
     def save_selected(self):
         if self.worker and self.worker.is_alive():
@@ -2261,6 +2415,8 @@ class App(tk.Tk):
         return "break"
 
     def on_saved_changed(self):
+        if self.saved_window and self.saved_window.winfo_exists():
+            self.saved_window.refresh()
         self._mark_saved()
         self._update_home()
 

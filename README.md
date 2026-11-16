@@ -83,6 +83,12 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
 - **Saved lines → View saved lines...** (Ctrl+L) opens your collection from every file you've transcribed.
   Click a line to see its screenshot, **▶ Play** / Space / double-click to hear it, search by text,
   and **Delete selected** to remove lines.
+- **Fixing a line's text** — select the line and press **F2** (or **✎ Edit text...**, or right-click),
+  on the Create screen or in View saved lines. Type the correction; Enter saves it.
+  - On the Create screen the transcript files in `output\` are rewritten with the new text.
+  - A line that's in both places is changed in both, whichever one you edit.
+  - Cards already made from a saved line keep the sentence they were made with; a saved line
+    remembers the text it was saved with (`original_text` in `saved_lines.json`).
 - Saved lines live in `saved\`: `saved_lines.json` plus their own copies of the clips and
   screenshots in `saved\media\`, so they're kept even if you re-transcribe or delete `output\`.
 
