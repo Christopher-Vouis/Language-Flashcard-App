@@ -201,12 +201,13 @@ Command line alternative:
 - `cards.py` — the flashcard deck.
 - `srs.py` — spaced repetition: due dates and what Again / Hard / Correct do (the numbers are at the top).
 - `profiles.py` — user profiles and the default profile.
-- `home.py` — the main menu, drawn over `assets\menu_bg.png` (positions are in the picture's 1200 × 1500 pixels).
-- `assets\` — the main menu's background picture and its button picture. The window opens 4:5, the
-  shape of the background; it widens by itself for the Create screen and goes back afterwards.
-  In other window shapes nothing is stretched: a wider window shows more of the dots band
-  (`assets\menu_dots.png`, 3840 px wide), the A / あ stay
-  behind the middle of the menu, and the stripes stay in the bottom-left corner.
+- `home.py` — the main menu (positions are in the background picture's 1200 × 1500 pixels).
+- `backdrop.py` — the background picture behind the main menu, Study and Create. Nothing is stretched:
+  a wider window shows more of the dots band (`assets\menu_dots.png`, 3840 px wide), the A / あ drift
+  to the right as the window widens, and the stripes stay in the bottom-left corner. On Study the card
+  sits on a raised panel, and on Create the controls sit on one panel, with the picture around them.
+- `assets\` — the background picture, the dots band and the main menu's button picture.
+- The window opens at 800 × 600; it widens by itself for the Create screen and goes back afterwards.
 - `subtitles.py` — reads .srt / .vtt / .ass subtitle files as lines.
 - `theme.py` — the dark color scheme; every color is defined at the top, so it's easy to adjust.
 - `templates.py`, `card_view.py`, `template_editor.py` — card layouts: the data, drawing a card, and the drag-and-drop editor.

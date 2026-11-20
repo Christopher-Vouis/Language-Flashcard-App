@@ -16,10 +16,12 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+import backdrop
 import media
 import srs
 import templates
 from audio import play_wav, stop_wav
+from backdrop import Backdrop
 from card_view import CardView
 from home import HomeScreen
 import subtitles
@@ -177,8 +179,7 @@ class PreviewPanel(ttk.Frame):
 
         # fixed-size holder so the image never pushes the layout around
         holder = tk.Frame(self, bg=theme.IMAGE_BG, width=420, height=image_height)
-        holder.pack(fill="both", expand=True)
-        holder.pack_propagate(False)
+        holder.pack_propagate(False)        # packed last (below), so it's the part that shrinks
         self.image_label = tk.Label(holder, bg=theme.IMAGE_BG, fg=theme.MUTED,
                                     text="Select a line to preview it", font=("Segoe UI", 10))
         self.image_label.pack(fill="both", expand=True)
@@ -198,22 +199,25 @@ class PreviewPanel(ttk.Frame):
         self.meta_var = tk.StringVar()
         self.text_var = tk.StringVar()
         self.meta_label = ttk.Label(self, textvariable=self.meta_var, foreground=theme.MUTED)
-        self.meta_label.pack(anchor="w", pady=(8, 0))
         self.text_label = ttk.Label(self, textvariable=self.text_var, font=("Segoe UI", 14),
                                     wraplength=420, justify="left")
-        self.text_label.pack(anchor="w", fill="x", pady=(2, 8))
         self.bind("<Configure>", self._rewrap)
 
         controls = ttk.Frame(self)
-        controls.pack(fill="x", pady=(0, 4))
         self.play_btn = ttk.Button(controls, text="▶  Play", command=self.play, state="disabled")
         self.play_btn.pack(side="left")
         ttk.Button(controls, text="■  Stop", command=stop_wav).pack(side="left", padx=6)
+        # packed from the bottom up, then the image fills what's left: in a short
+        # window the picture gets smaller instead of the buttons being cut off
         if autoplay_var is not None:
             ttk.Checkbutton(controls, text="Auto-play on select",
                             variable=autoplay_var).pack(side="left", padx=6)
             ttk.Label(self, text="Tip: ↑/↓ to move, Space or double-click to play.",
-                      foreground=theme.SUBTLE).pack(anchor="w")
+                      foreground=theme.SUBTLE).pack(side="bottom", anchor="w")
+        controls.pack(side="bottom", fill="x", pady=(0, 4))
+        self.text_label.pack(side="bottom", anchor="w", fill="x", pady=(2, 8))
+        self.meta_label.pack(side="bottom", anchor="w", pady=(8, 0))
+        holder.pack(side="top", fill="both", expand=True)
 
     def _rewrap(self, e):
         w = max(e.width - 20, 200)
@@ -230,7 +234,7 @@ class PreviewPanel(ttk.Frame):
             self.word_var.set(card.get("target_word", ""))
             self.reading_var.set(card.get("reading", ""))
             self.def_var.set(card.get("definition", ""))
-            self.details.pack(anchor="w", fill="x", pady=(8, 0), before=self.meta_label)
+            self.details.pack(side="bottom", anchor="w", fill="x", pady=(8, 0), after=self.meta_label)
         else:
             self.details.pack_forget()
 
@@ -1089,6 +1093,11 @@ class AddCardsWindow(CardsWindow):
 
 
 # ------------------------------------------------------------ study mode
+STUDY_BAND = 0.45          # Study / Create show the lower part of the dots band
+CARD_BG, CARD_EDGE = "#26282c", "#3c3f46"
+CARD_MARGIN = 24
+
+
 class StudyScreen(ttk.Frame):
     """Spaced-repetition study: the deck's DUE cards one at a time - front →
     Flip → back → Again / Hard / Correct (see srs.py), each side drawn from
@@ -1103,25 +1112,28 @@ class StudyScreen(ttk.Frame):
         self.deck: list[str] = self._due_ids()   # the session queue: deck[0] is shown
         self.reviewed = 0
         self.flipped = False
+        # everything sits on the background picture (backdrop.py); see _layout
+        self.canvas = c = Backdrop(self, band=STUDY_BAND, layout=self._layout)
+        c.pack(fill="both", expand=True)
+
+        # ---- header, on the dots band
         self.progress_var = tk.StringVar()
-        head = ttk.Frame(self, padding=(12, 10, 12, 0))
-        head.pack(fill="x")
-        ttk.Button(head, text="←  Main menu", command=app.show_home,
-                   takefocus=False).pack(side="left")
-        ttk.Label(head, textvariable=self.progress_var, foreground=theme.MUTED).pack(side="left", padx=12)
-        edit = ttk.Menubutton(head, text="✎  Edit layout  ▾", takefocus=False)
+        self.layout_var = tk.StringVar()
+        c.create_window(0, 0, anchor="w", tags="menu_btn", window=ttk.Button(
+            c, text="←  Main menu", command=app.show_home, takefocus=False))
+        edit = ttk.Menubutton(c, text="✎  Edit layout  ▾", takefocus=False)
         menu = tk.Menu(edit, tearoff=False)
         menu.add_command(label="This card only...", command=lambda: (
             self.current() and app.edit_template(self.current())))
         menu.add_command(label="All cards (default layout)...", command=app.edit_template)
         edit["menu"] = menu
-        edit.pack(side="right")
-        self.layout_var = tk.StringVar()
-        ttk.Label(head, textvariable=self.layout_var, foreground=theme.SUBTLE).pack(side="right", padx=10)
+        c.create_window(0, 0, anchor="e", tags="edit_btn", window=edit)
+        self._text("progress", self.progress_var, fill=theme.FG, anchor="w")
+        self._text("layout_note", self.layout_var, fill=theme.MUTED, anchor="e")
 
-        # the card itself, drawn from the profile's card template (templates.py)
-        self.view = CardView(self)
-        self.view.pack(fill="both", expand=True, padx=24, pady=8)
+        # ---- the card, on a raised panel; drawn from the card's layout (templates.py)
+        self.view = CardView(c, bg=CARD_BG)
+        c.create_window(0, 0, anchor="nw", tags="card", window=self.view)
 
         # ---- buttons: Flip (front), then Again / Hard / Correct (back)
         style = ttk.Style(self)
@@ -1131,27 +1143,25 @@ class StudyScreen(ttk.Frame):
                             foreground="#ffffff", font=("Segoe UI", 12, "bold"), padding=(10, 8))
             style.map(f"{name}.TButton", background=[("active", hover)],
                       lightcolor=[("active", hover)], darkcolor=[("active", hover)])
-        bottom = ttk.Frame(self, padding=(12, 4, 12, 14))
-        bottom.pack(fill="x")
-        self.buttons = ttk.Frame(bottom)
-        self.buttons.pack()
+        style.configure("Flip.TButton", font=("Segoe UI", 12, "bold"), padding=(10, 8))
         # takefocus=False: Space/Enter/1/2/3 are handled by the window, so a
         # focused button must not fire a second time (which would skip a card)
-        self.action_btn = ttk.Button(self.buttons, text="Flip", command=self.advance, width=20,
-                                     takefocus=False)
-        self.grade_bar = ttk.Frame(self.buttons)
+        self.action_btn = ttk.Button(c, text="Flip", command=self.advance, width=16,
+                                     style="Flip.TButton", takefocus=False)
+        c.create_window(0, 0, tags=("flip",), window=self.action_btn)
         self.grade_hints: dict[str, tk.StringVar] = {}
-        for col, (grade, label, key) in enumerate(((srs.AGAIN, "Again", "1"), (srs.HARD_GRADE, "Hard", "2"),
-                                                   (srs.CORRECT, "Correct", "3"))):
-            ttk.Button(self.grade_bar, text=label, style=f"{label}.TButton", width=12, takefocus=False,
-                       command=lambda g=grade: self.grade(g)).grid(row=0, column=col, padx=8)
+        for grade, label, key in ((srs.AGAIN, "Again", "1"), (srs.HARD_GRADE, "Hard", "2"),
+                                  (srs.CORRECT, "Correct", "3")):
+            c.create_window(0, 0, tags=("grade", f"btn_{grade}"), window=ttk.Button(
+                c, text=label, style=f"{label}.TButton", width=11, takefocus=False,
+                command=lambda g=grade: self.grade(g)))
             hint = tk.StringVar()
             self.grade_hints[grade] = hint
-            ttk.Label(self.grade_bar, textvariable=hint, foreground=theme.MUTED).grid(row=1, column=col, pady=(4, 0))
-            ttk.Label(self.grade_bar, text=f"key {key}", foreground=theme.SUBTLE,
-                      font=("Segoe UI", 8)).grid(row=2, column=col)
+            self._text(f"hint_{grade}", hint, fill=theme.FG, tags=("grade",))
+            c.create_text(0, 0, text=f"key {key}", fill=theme.MUTED, font=("Segoe UI", 8),
+                          tags=("grade", f"key_{grade}"))
         self.keys_var = tk.StringVar()
-        ttk.Label(bottom, textvariable=self.keys_var, foreground=theme.SUBTLE).pack(pady=(6, 0))
+        self._text("keys", self.keys_var, fill=theme.MUTED)
         self.show_front(autoplay=False)
 
     # --- the session queue
@@ -1221,19 +1231,64 @@ class StudyScreen(ttk.Frame):
         new = states.count("new")
         learning = states.count("learning") + states.count("relearning")
         review = states.count("review")
-        self.progress_var.set(f"Deck: {self.app.cards.deck_name(self.deck_id)}  ·  "
-                              f"New {new}  ·  Learning {learning}  ·  Review {review}  ·  "
-                              f"{self.reviewed} answered this session")
+        self.progress_var.set(f"{self.app.cards.deck_name(self.deck_id)}  ·  New {new}  ·  "
+                              f"Learning {learning}  ·  Review {review}  ·  {self.reviewed} answered")
+
+    # --- layout on the background picture
+    def _text(self, tag: str, var: tk.StringVar, fill: str, anchor: str = "center", tags: tuple = ()):
+        """Canvas text (see-through, unlike a Label) that follows a StringVar."""
+        self.canvas.create_text(0, 0, text=var.get(), fill=fill, anchor=anchor, font=("Segoe UI", 10),
+                                tags=(tag,) + tags)
+        var.trace_add("write", lambda *a: self.canvas.itemconfigure(tag, text=var.get()))
+
+    def _layout(self, w: int, h: int, dots_h: int, header_h: int) -> list[dict]:
+        """Place everything for a w x h screen; returns the card's panel."""
+        c = self.canvas
+        y = max(dots_h / 2, 22)                       # header row: in the middle of the dots
+        c.coords("menu_btn", 14, y)
+        c.coords("edit_btn", w - 14, y)
+        x = c.bbox("menu_btn")[2] + 14 if c.bbox("menu_btn") else 140
+        c.coords("progress", x, y)
+        right = c.bbox("edit_btn")[0] - 12 if c.bbox("edit_btn") else w - 160
+        c.coords("layout_note", right, y)
+        note = c.bbox("layout_note")
+        note_w = note[2] - note[0] + 16 if note and self.layout_var.get() else 0
+        c.itemconfigure("progress", width=max(right - x - note_w, 120))
+
+        # bottom: buttons, the "later today / tomorrow" hints, the key line
+        cx = w / 2
+        keys_y = h - 13                               # the line of keyboard shortcuts
+        key_y = keys_y - 24                           # "key 1" ...
+        hint_y = key_y - 16                           # "later today" ...
+        btn_y = hint_y - 30
+        c.coords("flip", cx, btn_y + 16)
+        c.coords("keys", cx, keys_y)
+        c.itemconfigure("keys", width=max(w - 40, 100))
+        for i, grade in enumerate((srs.AGAIN, srs.HARD_GRADE, srs.CORRECT)):
+            gx = cx + (i - 1) * 150
+            c.coords(f"btn_{grade}", gx, btn_y)
+            c.coords(f"hint_{grade}", gx, hint_y)
+            c.coords(f"key_{grade}", gx, key_y)
+
+        # the card: centred between the header and the buttons, not too wide
+        top = header_h + 10
+        bottom = btn_y - 30
+        cw = min(w - 2 * CARD_MARGIN, 1100)
+        x0 = (w - cw) / 2
+        pad = 12                                      # inside the panel, clear of its round corners
+        c.coords("card", x0 + pad, top + pad)
+        c.itemconfigure("card", width=max(cw - 2 * pad, 10), height=max(bottom - top - 2 * pad, 10))
+        return [{"box": (x0, top, x0 + cw, bottom), "radius": 16,
+                 "fill": backdrop.hex_rgb(CARD_BG), "outline": backdrop.hex_rgb(CARD_EDGE)}]
 
     def _show_buttons(self, back: bool, enabled: bool = True):
         """Flip on the front; Again / Hard / Correct on the back."""
+        c = self.canvas
+        c.itemconfigure("grade", state="normal" if back else "hidden")
+        c.itemconfigure("flip", state="hidden" if back else "normal")
         if back:
-            self.action_btn.pack_forget()
-            self.grade_bar.pack()
             self.keys_var.set("1 Again  ·  2 Hard  ·  3 / Space / Enter Correct  ·  R: replay audio  ·  Esc: main menu")
         else:
-            self.grade_bar.pack_forget()
-            self.action_btn.pack()
             self.action_btn.config(state="normal" if enabled else "disabled")
             self.keys_var.set("Space / Enter: flip  ·  R: replay audio  ·  Esc: main menu")
 
@@ -1311,11 +1366,11 @@ class App(tk.Tk):
     def __init__(self, initial_file: str | None = None):
         super().__init__()
         self.title("Language Flashcards")
-        # default size: the main menu's design is 1200 x 1500, so the window is 4:5
-        height = max(min(self.winfo_screenheight() - 130, 1000), 620)
-        width = round(height * 0.8)
-        self.geometry(f"{width}x{height}+{max((self.winfo_screenwidth() - width) // 2, 0)}+20")
-        self.minsize(600, 600)
+        # opens 800 x 600, centred on the screen
+        width, height = 800, 600
+        self.geometry(f"{width}x{height}+{max((self.winfo_screenwidth() - width) // 2, 0)}"
+                      f"+{max((self.winfo_screenheight() - height) // 2 - 30, 0)}")
+        self.minsize(640, 480)
         theme.apply(self)  # dark color scheme; must come before any widgets are built
 
         self.events: queue.Queue = queue.Queue()
@@ -1432,17 +1487,27 @@ class App(tk.Tk):
         self.bind("<Control-s>", lambda e: self.save_selected())
 
     def _build_ui(self):
+        """The Create screen: its controls sit on one panel over the background
+        picture (backdrop.py), with the dots band above and a Main menu button."""
         pad = {"padx": 6, "pady": 4}
+        canvas = self.create_canvas = Backdrop(self.create_screen, band=STUDY_BAND, layout=self._layout_create)
+        canvas.pack(fill="both", expand=True)
+        canvas.create_window(0, 0, anchor="w", tags="menu_btn", window=ttk.Button(
+            canvas, text="←  Main menu", command=self.show_home, takefocus=False))
+        canvas.create_text(0, 0, text="Create", anchor="w", fill="#ffffff",
+                           font=("Segoe UI", 15, "bold"), tags="title")
+        body = self.create_body = ttk.Frame(canvas, padding=(2, 2, 2, 2))
+        canvas.create_window(0, 0, anchor="nw", tags="body", window=body)
 
         # --- file row
-        top = ttk.Frame(self.create_screen, padding=(10, 10, 10, 0))
+        top = ttk.Frame(body, padding=(10, 10, 10, 0))
         top.pack(fill="x")
         ttk.Label(top, text="File:").pack(side="left")
         ttk.Entry(top, textvariable=self.file_var).pack(side="left", fill="x", expand=True, **pad)
         ttk.Button(top, text="Browse...", command=self.browse).pack(side="left")
 
         # --- subtitles row (optional): use a subtitle file's lines instead of AI transcription
-        subs = ttk.Frame(self.create_screen, padding=(10, 2, 10, 0))
+        subs = ttk.Frame(body, padding=(10, 2, 10, 0))
         subs.pack(fill="x")
         ttk.Label(subs, text="Subtitles (optional):").pack(side="left")
         ttk.Entry(subs, textvariable=self.subs_var).pack(side="left", fill="x", expand=True, **pad)
@@ -1454,7 +1519,7 @@ class App(tk.Tk):
                     increment=0.1, width=6).pack(side="left", padx=(4, 0))
 
         # --- options row
-        opts = ttk.Frame(self.create_screen, padding=(10, 4, 10, 4))
+        opts = ttk.Frame(body, padding=(10, 4, 10, 4))
         opts.pack(fill="x")
         ttk.Label(opts, text="Model:").pack(side="left")
         ttk.Combobox(opts, textvariable=self.model_var, values=tr.MODEL_SIZES,
@@ -1476,14 +1541,14 @@ class App(tk.Tk):
         self.stop_btn.pack(side="left")
 
         # --- progress
-        prog = ttk.Frame(self.create_screen, padding=(10, 0, 10, 4))
+        prog = ttk.Frame(body, padding=(10, 0, 10, 4))
         prog.pack(fill="x")
         self.progress = ttk.Progressbar(prog, maximum=1000)
         self.progress.pack(fill="x")
         ttk.Label(prog, textvariable=self.status_var, foreground=theme.MUTED).pack(anchor="w", pady=(4, 0))
 
         # --- main area: [table / full text]  |  [preview]
-        main = ttk.PanedWindow(self.create_screen, orient="horizontal")
+        main = ttk.PanedWindow(body, orient="horizontal")
         main.pack(fill="both", expand=True, padx=10, pady=4)
 
         left = ttk.PanedWindow(main, orient="vertical")
@@ -1495,7 +1560,7 @@ class App(tk.Tk):
         # The ☐/☑ column chooses lines (for saving); clicking elsewhere on a row
         # just picks which line is shown in the preview.
         self.tree = ttk.Treeview(table_frame, columns=("check", "saved", "text", "start", "end", "media"),
-                                 show="headings", selectmode="browse")
+                                 show="headings", selectmode="browse", height=4)
         for col, label, w, stretch, anchor in (
             ("check", UNCHECKED, 34, False, "center"),
             ("saved", "★", 30, False, "center"),
@@ -1544,7 +1609,7 @@ class App(tk.Tk):
         ttk.Label(hdr, text="Full transcript").pack(side="left")
         ttk.Checkbutton(hdr, text="Show timestamps", variable=self.ts_var,
                         command=self._refresh_text).pack(side="left", padx=12)
-        self.text = tk.Text(text_frame, wrap="word", font=("Segoe UI", 11), height=6)
+        self.text = tk.Text(text_frame, wrap="word", font=("Segoe UI", 11), height=3)
         tsb = ttk.Scrollbar(text_frame, orient="vertical", command=self.text.yview)
         self.text.configure(yscrollcommand=tsb.set)
         self.text.pack(side="left", fill="both", expand=True)
@@ -1558,8 +1623,8 @@ class App(tk.Tk):
         main.add(self.preview, weight=2)
 
         # --- bottom buttons
-        bottom = ttk.Frame(self.create_screen, padding=(10, 4, 10, 10))
-        bottom.pack(fill="x")
+        bottom = ttk.Frame(body, padding=(10, 4, 10, 6))
+        bottom.pack(side="bottom", fill="x", before=main)   # stays visible in a short window
         self.save_btn = ttk.Button(bottom, text="Save transcript as...", command=self.save_as,
                                    state="disabled")
         self.save_btn.pack(side="left")
@@ -1569,6 +1634,20 @@ class App(tk.Tk):
                    command=lambda: open_folder(OUTPUT_DIR)).pack(side="left")
         self.info_var = tk.StringVar()
         ttk.Label(bottom, textvariable=self.info_var, foreground=theme.MUTED).pack(side="right")
+
+    def _layout_create(self, w: int, h: int, dots_h: int, header_h: int) -> list[dict]:
+        c = self.create_canvas
+        y = max(dots_h / 2, 22)
+        c.coords("menu_btn", 14, y)
+        x = c.bbox("menu_btn")[2] + 16 if c.bbox("menu_btn") else 140
+        c.coords("title", x, y)
+        m = CARD_MARGIN if w >= 900 else 14         # margin: the picture shows around the panel
+        top, pad = header_h + 6, 8
+        box = (m, top, w - m, h - m)
+        c.coords("body", m + pad, top + pad)
+        c.itemconfigure("body", width=max(w - 2 * (m + pad), 10), height=max(h - m - top - 2 * pad, 10))
+        return [{"box": box, "radius": 14, "fill": backdrop.hex_rgb(theme.BG),
+                 "outline": backdrop.hex_rgb(CARD_EDGE)}]
 
     # -------------------------------------------------------------- actions
     def browse(self):

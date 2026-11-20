@@ -51,8 +51,10 @@ class CardView(tk.Frame):
             motion(event) and release(event) - the editor's drag handler
     """
 
-    def __init__(self, parent, scale: float = 1.0, mode: str = "study", drag=None, **kw):
-        super().__init__(parent, background=theme.BG, **kw)
+    def __init__(self, parent, scale: float = 1.0, mode: str = "study", drag=None,
+                 bg: str = theme.BG, **kw):
+        super().__init__(parent, background=bg, **kw)
+        self.bg = bg              # the card's colour (Study draws the card on a raised panel)
         self.scale = scale
         self.mode = mode
         self.drag = drag
@@ -80,7 +82,7 @@ class CardView(tk.Frame):
         self._card_images = card_images(card) if card else []
         for row in side.get("rows", []):
             grows = any(b["type"] in ("image", "slideshow") and b.get("size") == "fill" for b in row)
-            rf = tk.Frame(self, background=theme.BG)
+            rf = tk.Frame(self, background=self.bg)
             rf.pack(fill="both" if grows else "x", expand=grows, pady=self._px(3))
             items = []
             for block in row:
@@ -92,7 +94,7 @@ class CardView(tk.Frame):
             else:
                 rf.destroy()  # nothing on this row for this card (study/test mode)
         if not self.rows:
-            tk.Label(self, text=empty_text or "This side is empty.", bg=theme.BG, fg=theme.SUBTLE,
+            tk.Label(self, text=empty_text or "This side is empty.", bg=self.bg, fg=theme.SUBTLE,
                      font=("Segoe UI", self._px(12)), justify="center").pack(expand=True)
 
     def has_audio(self) -> bool:
@@ -107,7 +109,7 @@ class CardView(tk.Frame):
 
     def _block_frame(self, row: tk.Frame, selected: bool, grow: bool = False) -> tk.Frame:
         """Each block sits in its own frame (side by side when a row has several)."""
-        f = tk.Frame(row, background=theme.BG, highlightthickness=2 if self.editing else 0,
+        f = tk.Frame(row, background=self.bg, highlightthickness=2 if self.editing else 0,
                      highlightbackground=theme.ACCENT if selected else theme.BORDER,
                      highlightcolor=theme.ACCENT if selected else theme.BORDER)
         f.pack(side="left", fill="both", expand=True, padx=self._px(3), pady=0)
@@ -184,7 +186,7 @@ class CardView(tk.Frame):
                 "bold" if block.get("bold") else "normal")
         align = block.get("align", "center")
         lbl = tk.Label(f, text=text or f"({T.BLOCK_TYPES[kind]['label']} – empty on this card)",
-                       font=font, bg=theme.BG,
+                       font=font, bg=self.bg,
                        fg=COLOR.get(block.get("color", "text"), theme.FG) if text else theme.SUBTLE,
                        anchor=ANCHOR[align], justify=JUSTIFY[align])
         lbl.pack(fill="both", expand=True, padx=self._px(6), pady=self._px(2))
@@ -199,7 +201,7 @@ class CardView(tk.Frame):
         size = self._px(T.FONT_PX.get(block.get("size", "l"), 18))
         weight = "bold" if block.get("bold") else "normal"
         box = tk.Text(f, height=1, wrap="word", font=("Segoe UI", size, weight),
-                      relief="flat", borderwidth=0, highlightthickness=0, background=theme.BG,
+                      relief="flat", borderwidth=0, highlightthickness=0, background=self.bg,
                       foreground=COLOR.get(block.get("color", "text"), theme.FG),
                       cursor="arrow", takefocus=False)
         align = block.get("align", "center")
@@ -341,10 +343,10 @@ class CardView(tk.Frame):
             schedule()                      # a manual step restarts the timer
 
         if len(images) > 1:
-            bar = tk.Frame(f, background=theme.BG)
+            bar = tk.Frame(f, background=self.bg)
             bar.pack(pady=(self._px(4), 0))
             ttk.Button(bar, text="◀", width=3, takefocus=False, command=lambda: step(-1)).pack(side="left")
-            tk.Label(bar, textvariable=counter, background=theme.BG, foreground=theme.MUTED,
+            tk.Label(bar, textvariable=counter, background=self.bg, foreground=theme.MUTED,
                      font=("Segoe UI", self._px(10)), width=7).pack(side="left")
             ttk.Button(bar, text="▶", width=3, takefocus=False, command=lambda: step(1)).pack(side="left")
             if can_autoplay:
@@ -353,7 +355,7 @@ class CardView(tk.Frame):
                 pause_btn.pack(side="left", padx=(self._px(8), 0))
                 if self.editing:
                     tk.Label(bar, text=f"autoplay every {interval:g} s" + ("" if loop else ", once"),
-                             background=theme.BG, foreground=theme.SUBTLE,
+                             background=self.bg, foreground=theme.SUBTLE,
                              font=("Segoe UI", self._px(9))).pack(side="left", padx=(self._px(6), 0))
 
         f.bind("<Destroy>", lambda e: cancel(), add="+")

@@ -1,5 +1,6 @@
 """
-The main menu screen, drawn on one canvas over assets/menu_bg.png.
+The main menu screen, drawn on one canvas over the background picture
+(backdrop.py).
 
 The design is 1200 x 1500 (the size of the background picture); every position
 and size below is in those design pixels and is scaled to the window:
@@ -26,46 +27,27 @@ no anti-aliased shapes); the text is drawn by Tk so it stays sharp.
 
 from __future__ import annotations
 
-import os
 import tkinter as tk
 from tkinter import ttk
 
+import backdrop
 import theme
+from backdrop import DESIGN_W, DESIGN_H
 from cards import ALL
 
 try:
-    from PIL import Image, ImageDraw, ImageEnhance, ImageTk
+    from PIL import Image, ImageEnhance, ImageTk
 except ImportError:  # no Pillow: plain background, drawn buttons
     Image = None
-
-ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-DESIGN_W, DESIGN_H = 1200, 1500
 
 HEAD_FONT, BODY_FONT = "Tahoma", "Segoe UI"
 HEAD_FILL, HEAD_EDGE = "#dadada", "#6b6b6b"     # headings: light grey with a grey outline
 PANEL_SHADE = 0.67                              # the stats box: the picture behind it, this bright
 BTN_FACE, BTN_EDGE = "#323335", "#eaeaea"
 
-# parts of the background picture (design px): the page colour, the dotted band
-# with its line and shadow, the box holding the A / あ, and the corner stripes
-BASE = (30, 31, 34)
-LINE_Y, HEADER_H = 300, 345                     # dots end / white line starts; shadow ends
-GLYPH_BOX = (520, 430, 1020, 960)
-GLYPH_FULL_SCREEN = 0.80                        # where the A / あ centre sits in a full-screen-wide window
-STRIPES_BOX = (0, 400, 1040, 1500)
-
 # vertical centre (design px) of each group; a group keeps its shape when the
 # window isn't 4:5 and only its centre moves
 HEADER_Y, DECK_Y, BUTTONS_Y = 160, 600, 1150
-
-
-def _load(name: str):
-    if Image is None:
-        return None
-    try:
-        return Image.open(os.path.join(ASSETS, name)).convert("RGB")
-    except OSError:
-        return None
 
 
 class HomeScreen(ttk.Frame):
@@ -75,8 +57,7 @@ class HomeScreen(ttk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent)
         self.app = app
-        self.bg_src = _load("menu_bg.png")
-        self.btn_src = _load("menu_button.png")
+        self.btn_src = backdrop.load("menu_button.png")
         self._bg_img = None
         self._btn_imgs: dict[str, object] = {}
         self._size = (0, 0)
@@ -221,16 +202,10 @@ class HomeScreen(ttk.Frame):
         # ---- picture: background + stats panel
         px0, py0 = at(301, 498, DECK_Y)
         px1, py1 = at(901, 797, DECK_Y)
-        if self.bg_src is not None:
-            img = self._compose(w, h, sy)
-            k = 3                                 # draw the rounded box 3x and shrink = smooth corners
-            bw, bh = max(round(px1 - px0), 2), max(round(py1 - py0), 2)
-            mask = Image.new("L", (bw * k, bh * k), 0)
-            ImageDraw.Draw(mask).rounded_rectangle((0, 0, bw * k - 1, bh * k - 1), radius=26 * s * k, fill=255)
+        if backdrop.available():
+            img, _dots_h, _header_h = backdrop.compose(w, h, self.winfo_screenwidth())
             # translucent: the picture shows through, darkened (measured from the design)
-            box = (round(px0), round(py0), round(px0) + bw, round(py0) + bh)
-            dark = img.crop(box).point(lambda v: max(int(v * PANEL_SHADE - 4), 0))
-            img.paste(dark, box[:2], mask.resize((bw, bh), Image.LANCZOS))
+            backdrop.draw_panel(img, (px0, py0, px1, py1), 26 * s, shade=PANEL_SHADE)
             self._bg_img = ImageTk.PhotoImage(img)
             c.itemconfigure("bg", image=self._bg_img)
             c.delete("panel")
@@ -285,55 +260,6 @@ class HomeScreen(ttk.Frame):
                 c.coords(f"box_{key}", x - bw / 2, y - bh / 2, x + bw / 2, y + bh / 2)
             self._place_outlined(f"txt_{key}", x, y - 10 * s, (HEAD_FONT, px(66), "bold"), 2 * s)
             self._show_button(key)
-
-    def _layers(self):
-        """Cut the background picture into its three parts (once)."""
-        if getattr(self, "_parts", None) is None:
-            src = self.bg_src
-            stripes = src.crop(STRIPES_BOX)
-            gx0, gy0, gx1, gy1 = GLYPH_BOX        # blank the letters out of the stripes part
-            stripes.paste(BASE, (gx0 - STRIPES_BOX[0], gy0 - STRIPES_BOX[1],
-                                 gx1 - STRIPES_BOX[0], gy1 - STRIPES_BOX[1]))
-            # dots: the wide band picture; the white line and its shadow are the
-            # same all the way across, so one column of them is enough
-            dots = _load("menu_dots.png") or src.crop((0, 0, DESIGN_W, LINE_Y))
-            line = src.crop((0, LINE_Y, 1, HEADER_H))
-            self._parts = (dots, line, src.crop(GLYPH_BOX), stripes)
-        return self._parts
-
-    def _compose(self, w: int, h: int, sy: float):
-        """The background at the window's size. Nothing is stretched: every
-        part keeps its shape and is scaled with the window's height only.
-          - dots band: starts at the left; a wider window shows more of it
-            (it is 3840 px wide; beyond that it repeats, mirrored)
-          - A / あ: keep their shape, always inside the window; they drift to
-            the right as the window widens (see below)
-          - stripes: stay in the bottom-left corner"""
-        dots, line, glyphs, stripes = self._layers()
-        scale = lambda im: im.resize((max(round(im.width * sy), 1), max(round(im.height * sy), 1)),  # noqa: E731
-                                     Image.LANCZOS)
-        img = Image.new("RGB", (w, h), BASE)
-        stripes = scale(stripes)
-        img.paste(stripes, (0, h - stripes.height))
-        glyphs = scale(glyphs)
-        # their centre: where the design has it (64% across) in a 4:5 window, moving
-        # right as the window widens, to 80% across at the full width of the screen;
-        # never outside the window
-        home = (GLYPH_BOX[0] + GLYPH_BOX[2]) / 2 / DESIGN_W
-        narrow, full = DESIGN_W * sy, self.winfo_screenwidth()
-        t = min(max((w - narrow) / (full - narrow), 0), 1) if full > narrow else 1
-        centre = (home + (GLYPH_FULL_SCREEN - home) * t) * w
-        gx = min(max(round(centre - glyphs.width / 2), 0), max(w - glyphs.width, 0))
-        img.paste(glyphs, (gx, round(GLYPH_BOX[1] * sy)))
-        band_h = max(round(LINE_Y * sy), 1)           # the white line starts right under the dots
-        dots = dots.resize((max(round(dots.width * band_h / dots.height), 1), band_h), Image.LANCZOS)
-        x, flipped = 0, False
-        while x < w:
-            img.paste(dots.transpose(Image.FLIP_LEFT_RIGHT) if flipped else dots, (x, 0))
-            x += dots.width
-            flipped = not flipped
-        img.paste(line.resize((w, max(round(line.height * sy), 1)), Image.LANCZOS), (0, band_h))
-        return img
 
     # ------------------------------------------------------------ data
     def update_view(self, profile_name: str, deck_name: str, new: int, due: int, total: int):
