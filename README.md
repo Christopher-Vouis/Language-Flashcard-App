@@ -17,9 +17,9 @@ Double-click **`run.bat`**. The app opens at the **main menu**:
   locks the rest of the app until a profile signs in.
 - **Deck** — the name of the deck being studied, with its New / Due / Total.
 - **Change Deck** — a menu of your decks (and **All cards**); under them **＋ New deck...**,
-  **✎ Rename this deck...** and **✕ Delete this deck...** (also in the **Cards** menu).
+  **✎ Rename this deck...** and **✕ Delete this deck...**.
   Deleting a deck never deletes its cards — they stay in All cards and their other decks.
-- **Edit Deck** (or **Cards → View / edit current deck...**) — the **View Deck**
+- **Edit Deck** — the **View Deck**
   window: the deck's cards with their status (New / Learning / Review) and when each is due.
   - **Add cards...** opens a list of all your cards (search, or filter by deck; ✓ = already in this deck):
     select some (Ctrl / Shift for several) and press **Add to deck**.
@@ -33,12 +33,14 @@ Double-click **`run.bat`**. The app opens at the **main menu**:
 - **Create** — transcribe a video or song, save lines and make cards (everything below).
   The buttons work with the mouse or the keyboard (Tab to one, then Enter or Space).
 
-Switch screens any time with **Navigate → Main menu / Study / Create** (Ctrl+1 / Ctrl+2 / Ctrl+3).
+The app has no menu bar: everything is on its screens, and Study and Create have a **← Main menu**
+button. Keyboard shortcuts: Ctrl+1 main menu · Ctrl+2 Study · Ctrl+3 Create · Ctrl+4 Profiles ·
+Ctrl+L Create Cards · Ctrl+K all cards · Ctrl+O open a file.
 
 ### Profiles
 
 - Each profile has its own **saved lines, cards and decks** (transcripts in `output\` are shared).
-- **change** (under Welcome on the main menu) or **Navigate → Profiles** (Ctrl+4) opens the Profiles
+- **change** (under Welcome on the main menu, or Ctrl+4) opens the Profiles
   screen: **Sign in** (or double-click), **New profile...**, **Rename...**, **Delete...**.
 - **★ Make default** chooses the profile signed in automatically when the app starts;
   **No default (ask at startup)** makes the app open on the Profiles screen instead.
@@ -47,7 +49,10 @@ Switch screens any time with **Navigate → Main menu / Study / Create** (Ctrl+1
 - Your data from before profiles existed is the **Main** profile (still in `saved\` and `cards\`);
   new profiles keep their data in `profiles\<id>\`. The list is in `profiles.json`.
 
-On the Create screen: **Browse...** → pick a file → **Transcribe**.
+The Create screen has two tabs: **Import Content** (transcribe a file and save lines) and
+**Create Cards** (your saved lines, where cards are made).
+
+On **Import Content**: **Browse...** → pick a file → **Transcribe**.
 
 - Lines appear in the table as they're transcribed.
 - With **Audio clips + screenshots** ticked (default), each line then gets an audio clip
@@ -80,11 +85,12 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
   range, Enter ticks the highlighted line, the ☐ column header or **Select all** / Ctrl+A ticks every line),
   then **★ Save selected lines** (Ctrl+S). Clicking elsewhere on a row only changes the preview.
   Ticked lines are tinted blue in the full transcript. Saved lines get a ★; saving a line twice is ignored.
-- **Saved lines → View saved lines...** (Ctrl+L) opens your collection from every file you've transcribed.
+- The **Create Cards** tab (or **Create Cards →** under the table, or Ctrl+L) is your collection of saved
+  lines from every file you've transcribed.
   Click a line to see its screenshot, **▶ Play** / Space / double-click to hear it, search by text,
   and **Delete selected** to remove lines.
 - **Fixing a line's text** — select the line and press **F2** (or **✎ Edit text...**, or right-click),
-  on the Create screen or in View saved lines. Type the correction; Enter saves it.
+  on either Create tab. Type the correction; Enter saves it.
   - On the Create screen the transcript files in `output\` are rewritten with the new text.
   - A line that's in both places is changed in both, whichever one you edit.
   - Cards already made from a saved line keep the sentence they were made with; a saved line
@@ -94,14 +100,14 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
 
 ### Flashcards
 
-- In **View saved lines**, select a line and click **＋ New card...** (or Enter / Ctrl+N / right-click).
+- On **Create → Create Cards**, select a line and click **＋ New card...** (or Enter / Ctrl+N / right-click).
   The card editor shows the screenshot, a **▶ Play** button and the sentence. Highlight a word in the
   sentence and click **Use selection as target word**, or type it, then fill in **Reading** and
   **Definition**, tick the **Decks** it belongs in (one or more; the deck chosen on the main menu is
   ticked for you, and **＋ New deck...** makes one on the spot), then click **Save card** (Ctrl+Enter).
   You can make several cards from one line;
-  the **Cards** column in Saved lines shows how many each line has.
-- **Cards → View cards...** (Ctrl+K) lists every card with the same search, screenshot preview and
+  the **Cards** column shows how many each line has.
+- **Ctrl+K** lists every card with the same search, screenshot preview and
   playback as Saved lines, plus the word, reading and definition. The **Deck** filter shows one deck;
   the **Decks** column shows where each card is. **✎ Edit card...** (or Enter) changes the three fields,
   the card's decks and its images. **Add to deck ▾** (also on right-click) adds the selected card(s) to a deck,
@@ -113,7 +119,7 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
 
 ### Study mode
 
-- **Study** on the main menu, **Navigate → Study** (Ctrl+2 or Ctrl+T), or **Study cards** in the Cards window.
+- **Study** on the main menu (Ctrl+2 or Ctrl+T), or **Study cards** in the Cards window.
 - **Front:** the target word and its sentence (the word highlighted in red). **Flip** (Space / Enter)
   shows the **back**: reading, definition, screenshot, and plays the audio clip automatically
   (**▶ Replay audio** or R to hear it again).
@@ -133,7 +139,7 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
 
 ### Card layout editor
 
-- **✎ Edit card layout** (top right of the Study screen), **Cards → Card layout (front / back)...**, or
+- **✎ Edit layout** (top right of the Study screen), or
   **Card layout...** in the Cards window. Each profile has its own layout.
 - **Blocks** (left): Target word, Reading, Definition, Sentence, Audio button, Source (file & time),
   Divider line and Custom text — and the **▾ Images** section (click its title to fold it):
@@ -165,7 +171,7 @@ On the Create screen: **Browse...** → pick a file → **Transcribe**.
   banner says so). Saving gives that card its own layout; every other card keeps the default. The Cards
   window's **Layout** column shows *custom*, and study mode notes "This card has its own layout".
   **Use the default layout for this card** (top right of the editor) removes it again.
-  **Edit layout ▾ → All cards (default layout)...** or **Cards → Card layout** edits the default.
+  **Edit layout ▾ → All cards (default layout)...** edits the default.
 - **Images on a card.** **＋ Add image...** copies pictures (PNG, JPG, GIF, WebP, BMP) into the card.
   To **delete** one: **✎ Edit card...** in the Cards window shows the card's images as thumbnails, each with
   **✕ Delete** (and **＋ Add image...**); or in the layout editor click the **✕** on an image in the Images
@@ -206,6 +212,7 @@ Command line alternative:
   a wider window shows more of the dots band (`assets\menu_dots.png`, 3840 px wide), the A / あ drift
   to the right as the window widens, and the stripes stay in the bottom-left corner. On Study the card
   sits on a raised panel, and on Create the controls sit on one panel, with the picture around them.
+  `draw_tabs` draws Create's tabs on the white line, with the line's shadow following their outline.
 - `assets\` — the background picture, the dots band and the main menu's button picture.
 - The window opens at 800 × 600; it widens by itself for the Create screen and goes back afterwards.
 - `subtitles.py` — reads .srt / .vtt / .ass subtitle files as lines.

@@ -23,7 +23,7 @@ import tkinter as tk
 import theme
 
 try:
-    from PIL import Image, ImageDraw, ImageTk
+    from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageTk
 except ImportError:  # no Pillow: plain background colour
     Image = None
 
@@ -88,14 +88,15 @@ def available() -> bool:
     return Image is not None and bool(_layers())
 
 
-def compose(w: int, h: int, screen_w: int, band: float = 1.0):
+def compose(w: int, h: int, screen_w: int, band: float = 1.0, line: bool = True):
     """The background picture at the window's size. `band` = how much of the
     dots band to show (from its bottom edge, where the dots are; Study and
-    Create show less of it to leave room for their controls).
+    Create show less of it to leave room for their controls). line=False leaves
+    out the white line and its shadow (Create draws them itself, with its tabs).
     Returns (image, dots_height, header_height) - the line and shadow sit
     between dots_height and header_height."""
     sy = h / DESIGN_H
-    dots, line, glyphs, stripes, line_h = _scaled_parts(h, sy)
+    dots, line_img, glyphs, stripes, line_h = _scaled_parts(h, sy)
     img = Image.new("RGB", (w, h), BASE)
     img.paste(stripes, (0, h - stripes.height))
     home = (GLYPH_BOX[0] + GLYPH_BOX[2]) / 2 / DESIGN_W
@@ -112,7 +113,8 @@ def compose(w: int, h: int, screen_w: int, band: float = 1.0):
         img.paste(dots.transpose(Image.FLIP_LEFT_RIGHT) if flipped else dots, (x, 0))
         x += dots.width
         flipped = not flipped
-    img.paste(line.resize((w, line_h), Image.LANCZOS), (0, shown))
+    if line:
+        img.paste(line_img.resize((w, line_h), Image.LANCZOS), (0, shown))
     return img, shown, shown + line_h
 
 
@@ -141,6 +143,88 @@ def draw_panel(img, box, radius: float, fill=None, shade: float | None = None, o
         img.paste(fill, (x0, y0), mask)
 
 
+# the white line and the shadow under it, measured from menu_bg.png (design px)
+LINE_STROKE = 3            # white, (234, 234, 234)
+SHADOW_LEN = 25            # the shadow fades from SHADOW_DARK to nothing over this many px
+SHADOW_DARK = 0.67         # right under the line the page is this much darker
+LINE_WHITE = (234, 234, 234)
+
+
+def draw_tabs(img, tabs: list[tuple[float, float]], active: int, top: float, line_y: float,
+              radius: float, flare: float, sy: float, fill=BASE):
+    """The white line across the window with tabs standing on it, like folder tabs.
+
+    tabs    (left, right) of each tab's outer edge, in px
+    active  which tab is open: it has no line under it, so it opens into the page
+    top     the tabs' outer top edge; line_y = the top of the white line
+    radius  the tabs' top corners; flare = the small curves where a tab meets the line
+
+    The outline, the fills and the shadow are all made from the same shapes: a
+    shadow falls under every edge (under the line, and inside each tab under its
+    top), just like the plain line's shadow. Drawn 3x bigger and shrunk, so the
+    curves are smooth."""
+    w = img.width
+    stroke = max(LINE_STROKE * sy, 1.2)
+    shadow_len = max(round(SHADOW_LEN * sy), 3)
+    flare = max(flare, stroke + 1.5)
+    height = min(int(line_y + stroke + shadow_len + 3), img.height)
+    k = 3
+    S = lambda v: round(v * k)                    # noqa: E731
+
+    base = line_y + stroke                        # the bottom of the white line = top of the page
+
+    def region(x0: float, x1: float, grow: float):
+        """Mask of one tab's inside (grow=0), or of it grown by the line's
+        thickness (grow=stroke), down to the bottom of the line."""
+        m = Image.new("L", (w * k, height * k), 0)
+        d = ImageDraw.Draw(m)
+        for cx, left in ((x0 - flare, True), (x1 + flare, False)):    # the flares
+            cy = base - flare
+            d.rectangle([S(cx), S(cy), S(cx + flare), S(base)] if left else
+                        [S(cx - flare), S(cy), S(cx), S(base)], fill=255)
+            r = flare - grow
+            d.ellipse([S(cx - r), S(cy - r), S(cx + r), S(cy + r)], fill=0)
+        d.rounded_rectangle([S(x0 - grow), S(top + stroke - grow), S(x1 + grow),
+                             S(base + radius + 2)], radius=S(radius + grow), fill=255)
+        d.rectangle([0, S(base), w * k, height * k], fill=0)
+        return m
+
+    full = (w * k, height * k)
+    rings = Image.new("L", full, 0)               # every tab's outline (open at the bottom)
+    tabs_in = Image.new("L", full, 0)             # every tab's inside
+    opening = Image.new("L", full, 0)             # the open tab's inside: no line under it
+    for i, (x0, x1) in enumerate(tabs):
+        x0, x1 = x0 + stroke, x1 - stroke         # inside edges
+        a, b = region(x0, x1, 0), region(x0, x1, stroke)
+        rings = ImageChops.lighter(rings, ImageChops.subtract(b, a))
+        tabs_in = ImageChops.lighter(tabs_in, a)
+        if i == active:
+            opening = a
+    line = Image.new("L", full, 0)
+    ImageDraw.Draw(line).rectangle([0, S(line_y), w * k, S(base) - 1], fill=255)
+    page = Image.new("L", full, 0)
+    ImageDraw.Draw(page).rectangle([0, S(base), w * k, height * k], fill=255)
+    white = ImageChops.lighter(rings, ImageChops.subtract(line, opening))
+    inside = ImageChops.lighter(tabs_in, page)
+    white = white.resize((w, height), Image.LANCZOS)
+    inside = inside.resize((w, height), Image.LANCZOS)
+    tabs_in = tabs_in.resize((w, height), Image.LANCZOS)
+
+    strip = img.crop((0, 0, w, height))
+    strip.paste(fill, (0, 0), tabs_in)            # the tabs' insides cover the dots
+    # shadow: under every bit of white, fading over shadow_len px down the page / tab
+    shadow = Image.new("L", (w, height), 0)
+    for dist in range(1, shadow_len + 1):
+        strength = SHADOW_DARK * (1 - (dist - 1) / shadow_len)
+        moved = Image.new("L", (w, height), 0)
+        moved.paste(white.crop((0, 0, w, height - dist)), (0, dist))
+        shadow = ImageChops.lighter(shadow, moved.point(lambda v, s=strength: int(v * s)))
+    shadow = ImageChops.multiply(shadow, inside).filter(ImageFilter.GaussianBlur(0.7))
+    strip = Image.composite(Image.new("RGB", strip.size, (0, 0, 0)), strip, shadow)
+    strip.paste(LINE_WHITE, (0, 0), white)
+    img.paste(strip, (0, 0))
+
+
 def hex_rgb(colour: str) -> tuple:
     return tuple(int(colour[i:i + 2], 16) for i in (1, 3, 5))
 
@@ -149,12 +233,14 @@ class Backdrop(tk.Canvas):
     """A canvas showing the background picture. `layout(w, h, dots_h, header_h)`
     is called whenever the size changes: it places the screen's widgets and
     canvas items, and returns the panels to draw behind them as a list of
-    dicts for draw_panel (box, radius, fill / shade, outline)."""
+    dicts for draw_panel (box, radius, fill / shade, outline). `decorate(img)`,
+    if given, draws the white line itself (Create: with its tabs)."""
 
-    def __init__(self, parent, band: float = 1.0, layout=None):
+    def __init__(self, parent, band: float = 1.0, layout=None, decorate=None):
         super().__init__(parent, highlightthickness=0, bd=0, background=theme.BG)
         self.band = band
         self.layout = layout
+        self.decorate = decorate     # decorate(img): draws the line itself (e.g. with tabs)
         self._img = None
         self._job = None
         self._drawn = (0, 0)
@@ -186,7 +272,10 @@ class Backdrop(tk.Canvas):
         w, h = self.winfo_width(), self.winfo_height()
         if w < 20 or h < 20 or not available():
             return
-        img, _dots_h, _header_h = compose(w, h, self.winfo_screenwidth(), self.band)
+        img, _dots_h, _header_h = compose(w, h, self.winfo_screenwidth(), self.band,
+                                          line=self.decorate is None)
+        if self.decorate:
+            self.decorate(img)
         for p in self._panels or []:
             draw_panel(img, **p)
         self._img = ImageTk.PhotoImage(img)

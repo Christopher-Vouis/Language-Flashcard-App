@@ -489,8 +489,9 @@ class CardEditor(tk.Toplevel):
 
 
 # ------------------------------------------------ list window (base class)
-class RecordWindow(tk.Toplevel):
-    """Searchable table + preview panel. Subclasses describe their records."""
+class RecordView:
+    """Searchable table + preview panel. Subclasses describe their records.
+    Mixed into a window (RecordWindow) or a panel inside a screen (RecordPanel)."""
 
     TITLE = ""
     NOUN = ("item", "items")
@@ -498,18 +499,12 @@ class RecordWindow(tk.Toplevel):
     FOLDER = ""
     WINDOW_ATTR = ""           # attribute on App holding the open window
 
-    def __init__(self, app: "App"):
-        super().__init__(app)
-        self.app = app
-        self.title(self.TITLE)
-        theme.dark_title_bar(self)
-        self.geometry("1200x660")
-        self.minsize(820, 440)
+    def _build(self, top_pad: int = 10):
         self.autoplay_var = tk.BooleanVar(value=False)
         self.search_var = tk.StringVar()
         self.count_var = tk.StringVar()
 
-        top = ttk.Frame(self, padding=(10, 10, 10, 4))
+        top = ttk.Frame(self, padding=(10, top_pad, 10, 4))
         top.pack(fill="x")
         ttk.Label(top, text="Search:").pack(side="left")
         ttk.Entry(top, textvariable=self.search_var, width=32).pack(side="left", padx=6)
@@ -547,10 +542,7 @@ class RecordWindow(tk.Toplevel):
         self.add_actions(bottom, self.menu)
         self.menu.add_command(label="▶  Play", command=self.preview.play)
         self.add_standard_buttons(bottom, self.menu)
-
-        self.protocol("WM_DELETE_WINDOW", self.close)
         self.refresh()
-        self.tree.focus_set()
 
     # --- subclass hooks
     def records(self) -> list[dict]:
@@ -648,14 +640,52 @@ class RecordWindow(tk.Toplevel):
         self.preview.clear()
         self.refresh()
 
+    def dialog_parent(self):
+        """The window dialogs belong to (a panel is inside the main window)."""
+        return self.winfo_toplevel()
+
     def close(self):
         stop_wav()
         setattr(self.app, self.WINDOW_ATTR, None)
         self.destroy()
 
 
-# ---------------------------------------------------- saved lines window
-class SavedLinesWindow(RecordWindow):
+class RecordWindow(RecordView, tk.Toplevel):
+    """A RecordView in its own window."""
+
+    def __init__(self, app: "App"):
+        tk.Toplevel.__init__(self, app)
+        self.app = app
+        self.title(self.TITLE)
+        theme.dark_title_bar(self)
+        self.geometry("1200x660")
+        self.minsize(820, 440)
+        self._build()
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.tree.focus_set()
+
+
+class RecordPanel(RecordView, ttk.Frame):
+    """A RecordView inside a screen of the main window."""
+
+    def __init__(self, parent, app: "App"):
+        ttk.Frame.__init__(self, parent)
+        self.app = app
+        self._build(top_pad=2)
+
+    def add_standard_buttons(self, bar, menu):
+        menu.add_separator()
+        menu.add_command(label="Delete selected", command=self.delete_selected)
+        ttk.Button(bar, text="Delete selected", command=self.delete_selected).pack(side="left", padx=6)
+        ttk.Button(bar, text="Open folder", command=lambda: open_folder(self.FOLDER)).pack(side="left")
+
+    def close(self):
+        stop_wav()        # a panel stays; it's just hidden with its screen
+
+
+# ---------------------------------------------------- saved lines (Create → Create Cards)
+class SavedLinesPanel(RecordPanel):
+    """The Create screen's Create Cards tab: your saved lines, and New card."""
     TITLE = "Saved lines"
     NOUN = ("saved line", "saved lines")
     COLUMNS = (
@@ -672,7 +702,7 @@ class SavedLinesWindow(RecordWindow):
     WINDOW_ATTR = "saved_window"
 
     def records(self):
-        return self.app.store.entries
+        return self.app.store.entries if self.app.store else []
 
     def row(self, e):
         n = self.app.cards.count_for_line(e["id"])
@@ -700,9 +730,21 @@ class SavedLinesWindow(RecordWindow):
         menu.add_command(label="✎  Edit text...", command=self.edit_text)
         self.tree.bind("<Return>", lambda e: self.new_card())
         self.tree.bind("<F2>", lambda e: self.edit_text())
-        self.bind("<Control-n>", lambda e: self.new_card())
-        ttk.Label(bar, text="New card: Enter / Ctrl+N  ·  Edit text: F2",
-                  foreground=theme.SUBTLE).pack(side="right", padx=10)
+        self.tree.bind("<Control-n>", lambda e: self.new_card())
+        self.hint = "New card: Enter / Ctrl+N  ·  Edit text: F2"
+        self.note_var = tk.StringVar(value=self.hint)
+        self.note_label = ttk.Label(bar, textvariable=self.note_var, foreground=theme.SUBTLE)
+        self.note_label.pack(side="right", padx=10)
+        self._note_job = None
+
+    def say(self, message: str):
+        """Show a message in place of the key hint for a few seconds."""
+        self.note_var.set(message)
+        self.note_label.configure(foreground=theme.FG)
+        if self._note_job:
+            self.after_cancel(self._note_job)
+        self._note_job = self.after(6000, lambda: (self.note_var.set(self.hint),
+                                                   self.note_label.configure(foreground=theme.SUBTLE)))
 
     def edit_text(self):
         """Correct the text of the selected saved line."""
@@ -714,7 +756,7 @@ class SavedLinesWindow(RecordWindow):
         note = (f"{n} card{'s' if n != 1 else ''} already made from this line "
                 f"keep{'s' if n == 1 else ''} the old sentence.") if n else ""
         old = e["text"]
-        new = ask_line_text(self, "Edit saved line", old, note)
+        new = ask_line_text(self.dialog_parent(), "Edit saved line", old, note)
         if new is None or not self.app.store.set_text(e["id"], new):
             return
         self.app.saved_text_edited(e, old)       # the same line on the Create screen follows
@@ -734,7 +776,7 @@ class SavedLinesWindow(RecordWindow):
         cards = self.app.cards
         default = cards.selected_deck if cards.selected_deck != ALL else \
             (cards.decks[0]["id"] if cards.decks else "")
-        dlg = CardEditor(self, "New card", e["text"], meta,
+        dlg = CardEditor(self.dialog_parent(), "New card", e["text"], meta,
                          audio=self.app.store.abs_path(e.get("audio_clip", "")),
                          shot=self.app.store.abs_path(e.get("screenshot", "")),
                          store=cards, decks=[default] if default else [],
@@ -749,8 +791,7 @@ class SavedLinesWindow(RecordWindow):
             return
         self.app.on_cards_changed()  # refreshes this window's Cards column too
         names = ", ".join(cards.deck_name(d) for d in dlg.result["decks"])
-        self.app.status_var.set(f"Card created: {dlg.result['target_word']} (deck: {names}).  "
-                                "View it in Cards → View cards (Ctrl+K)")
+        self.say(f"Card created: {dlg.result['target_word']}  (deck: {names})")
 
 
 # ---------------------------------------------------------- cards window
@@ -1093,7 +1134,9 @@ class AddCardsWindow(CardsWindow):
 
 
 # ------------------------------------------------------------ study mode
-STUDY_BAND = 0.45          # Study / Create show the lower part of the dots band
+STUDY_BAND = 0.45          # Study shows the lower part of the dots band
+CREATE_BAND = 0.45         # Create: the same, with its tabs standing on the line
+CREATE_TABS = (("import", "Import Content"), ("cards", "Create Cards"))
 CARD_BG, CARD_EDGE = "#26282c", "#3c3f46"
 CARD_MARGIN = 24
 
@@ -1311,9 +1354,9 @@ class StudyScreen(ttk.Frame):
                        f"\nThe next one is due {srs.describe_days(days)}  ({nxt:%a %d %b %Y}).")
             elif cards.cards and self.deck_id != ALL:
                 msg = ("This deck is empty.\n\nChoose another deck on the main menu, or add cards "
-                       "to this one (Saved lines → New card, or Add to deck in the Cards window).")
+                       "to this one (Create → Create Cards → New card, or Edit Deck → Add cards).")
             else:
-                msg = "No cards yet.\n\nCreate cards from Saved lines → New card, then come back here."
+                msg = "No cards yet.\n\nMake cards on Create → Create Cards → New card, then come back here."
             self.view.show(None, {"rows": []}, self._abs, empty_text=msg)
             self._show_buttons(back=False, enabled=False)
             return
@@ -1389,7 +1432,7 @@ class App(tk.Tk):
         self.profiles = ProfileStore(APP_DIR)
         self.profile = self.profiles.get(self.profiles.default) or self.profiles.profiles[0]
         self.store = SavedStore(self.profiles.saved_dir(self.profile))
-        self.saved_window: SavedLinesWindow | None = None
+        self.saved_window: SavedLinesPanel | None = None   # the Create Cards tab (built with the Create screen)
         self.cards = CardStore(self.profiles.cards_dir(self.profile))
         self.template = templates.load(self.profiles.cards_dir(self.profile))  # card layout
         self.template_window = None
@@ -1436,45 +1479,7 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------------ UI
     def _build_menu(self):
-        bar = tk.Menu(self)
-        filem = tk.Menu(bar, tearoff=False)
-        filem.add_command(label="Open file...", command=self.browse, accelerator="Ctrl+O")
-        filem.add_command(label="Save transcript as...", command=self.save_as)
-        filem.add_command(label="Open output folder", command=lambda: open_folder(OUTPUT_DIR))
-        filem.add_separator()
-        filem.add_command(label="Exit", command=self._on_close)
-        bar.add_cascade(label="File", menu=filem)
-
-        savedm = tk.Menu(bar, tearoff=False)
-        savedm.add_command(label="View saved lines...", command=self.show_saved, accelerator="Ctrl+L")
-        savedm.add_command(label="Save selected lines", command=self.save_selected, accelerator="Ctrl+S")
-        savedm.add_command(label="Select all lines", command=self.select_all, accelerator="Ctrl+A")
-        savedm.add_separator()
-        savedm.add_command(label="Open saved folder", command=lambda: open_folder(self.store.root))
-        bar.add_cascade(label="Saved lines", menu=savedm)
-
-        cardsm = tk.Menu(bar, tearoff=False)
-        cardsm.add_command(label="View cards...", command=self.show_cards, accelerator="Ctrl+K")
-        cardsm.add_command(label="View / edit current deck...", command=self.show_deck)
-        cardsm.add_command(label="Study cards", command=self.show_study, accelerator="Ctrl+T")
-        cardsm.add_command(label="Card layout (front / back)...", command=self.edit_template)
-        cardsm.add_command(label="New card from a saved line...", command=self.show_saved)
-        cardsm.add_separator()
-        cardsm.add_command(label="New deck...", command=self.new_deck)
-        cardsm.add_command(label="Rename current deck...", command=self.rename_deck)
-        cardsm.add_command(label="Delete current deck...", command=self.delete_deck)
-        cardsm.add_separator()
-        cardsm.add_command(label="Open cards folder", command=lambda: open_folder(self.cards.root))
-        bar.add_cascade(label="Cards", menu=cardsm)
-
-        navm = tk.Menu(bar, tearoff=False)
-        navm.add_command(label="Main menu", command=self.show_home, accelerator="Ctrl+1")
-        navm.add_command(label="Study", command=self.show_study, accelerator="Ctrl+2")
-        navm.add_command(label="Create", command=self.show_create, accelerator="Ctrl+3")
-        navm.add_separator()
-        navm.add_command(label="Profiles / switch user...", command=self.show_profiles, accelerator="Ctrl+4")
-        bar.add_cascade(label="Navigate", menu=navm)
-        self.config(menu=bar)
+        """Keyboard shortcuts (the app has no menu bar: everything is on its screens)."""
         self.bind_all("<Control-Key-1>", lambda e: self.show_home())
         self.bind_all("<Control-Key-2>", lambda e: self.show_study())
         self.bind_all("<Control-Key-3>", lambda e: self.show_create())
@@ -1490,14 +1495,27 @@ class App(tk.Tk):
         """The Create screen: its controls sit on one panel over the background
         picture (backdrop.py), with the dots band above and a Main menu button."""
         pad = {"padx": 6, "pady": 4}
-        canvas = self.create_canvas = Backdrop(self.create_screen, band=STUDY_BAND, layout=self._layout_create)
+        canvas = self.create_canvas = Backdrop(self.create_screen, band=CREATE_BAND, layout=self._layout_create,
+                                               decorate=self._draw_create_tabs)
         canvas.pack(fill="both", expand=True)
         canvas.create_window(0, 0, anchor="w", tags="menu_btn", window=ttk.Button(
             canvas, text="←  Main menu", command=self.show_home, takefocus=False))
         canvas.create_text(0, 0, text="Create", anchor="w", fill="#ffffff",
                            font=("Segoe UI", 15, "bold"), tags="title")
+        # the tabs: drawn into the background picture (_draw_create_tabs), labels on top
+        self.create_tab = "import"
+        self._tabs: dict[str, tuple] = {}         # name -> (left, top, right, bottom)
+        self._tab_geom = None
+        for name, label in CREATE_TABS:
+            canvas.create_text(0, 0, text=label, fill="#ffffff", tags=("tab_label", f"tab_{name}"))
+        canvas.bind("<Button-1>", self._on_tab_click)
+        canvas.bind("<Motion>", self._on_tab_hover)
         body = self.create_body = ttk.Frame(canvas, padding=(2, 2, 2, 2))
-        canvas.create_window(0, 0, anchor="nw", tags="body", window=body)
+        canvas.create_window(0, 0, anchor="nw", tags=("body", "body_import"), window=body)
+        # Create Cards tab: the saved lines, where cards are made
+        self.saved_window = SavedLinesPanel(canvas, self)
+        canvas.create_window(0, 0, anchor="nw", tags=("body", "body_cards"), window=self.saved_window,
+                             state="hidden")
 
         # --- file row
         top = ttk.Frame(body, padding=(10, 10, 10, 0))
@@ -1596,7 +1614,7 @@ class App(tk.Tk):
         self.save_sel_btn = ttk.Button(selbar, text="★  Save selected lines",
                                        command=self.save_selected, state="disabled")
         self.save_sel_btn.pack(side="left", padx=(6, 0))
-        ttk.Button(selbar, text="View saved lines...", command=self.show_saved).pack(side="left", padx=6)
+        ttk.Button(selbar, text="Create Cards  →", command=self.show_saved).pack(side="left", padx=6)
         self.edit_line_btn = ttk.Button(selbar, text="✎  Edit text...", command=self.edit_line, state="disabled")
         self.edit_line_btn.pack(side="left")
         ttk.Label(selbar, textvariable=self.sel_var, foreground=theme.MUTED).pack(side="left", padx=6)
@@ -1637,17 +1655,88 @@ class App(tk.Tk):
 
     def _layout_create(self, w: int, h: int, dots_h: int, header_h: int) -> list[dict]:
         c = self.create_canvas
-        y = max(dots_h / 2, 22)
+        # tabs stand on the white line, which sits at the bottom of the dots
+        tab_h = max(round(dots_h * 0.6), 30)          # proportions from the design mock-up
+        top = dots_h - tab_h
+        y = max(top / 2 + dots_h / 2 - 4, 22) if top < 34 else max(dots_h / 2, 22)
         c.coords("menu_btn", 14, y)
         x = c.bbox("menu_btn")[2] + 16 if c.bbox("menu_btn") else 140
         c.coords("title", x, y)
+        title_right = c.bbox("title")[2] if c.bbox("title") else x + 80
+        font = ("Segoe UI", -max(round(tab_h * 0.5), 13), "bold")
+        c.itemconfigure("tab_label", font=font)
+        widths = []
+        for name, _label in CREATE_TABS:
+            bx = c.bbox(f"tab_{name}")
+            widths.append(max((bx[2] - bx[0]) + 2 * tab_h if bx else 0, round(tab_h * 7)))
+        gap = round(tab_h * 0.6)
+        total = sum(widths) + gap * (len(widths) - 1)
+        left = max((w - total) / 2, title_right + tab_h)
+        self._tabs = {}
+        for (name, _label), tw in zip(CREATE_TABS, widths):
+            self._tabs[name] = (left, top, left + tw, dots_h)
+            c.coords(f"tab_{name}", left + tw / 2, top + tab_h / 2 + 1)
+            left += tw + gap
+        self._tab_geom = (top, dots_h, tab_h, h / backdrop.DESIGN_H)
+        self._style_tabs()
         m = CARD_MARGIN if w >= 900 else 14         # margin: the picture shows around the panel
         top, pad = header_h + 6, 8
         box = (m, top, w - m, h - m)
-        c.coords("body", m + pad, top + pad)
+        for tag in ("body_import", "body_cards"):    # (coords moves only the first item of a tag)
+            c.coords(tag, m + pad, top + pad)
         c.itemconfigure("body", width=max(w - 2 * (m + pad), 10), height=max(h - m - top - 2 * pad, 10))
         return [{"box": box, "radius": 14, "fill": backdrop.hex_rgb(theme.BG),
                  "outline": backdrop.hex_rgb(CARD_EDGE)}]
+
+    def _draw_create_tabs(self, img):
+        """The white line with the tabs on it (into the background picture)."""
+        if not self._tab_geom:
+            return
+        top, line_y, tab_h, sy = self._tab_geom
+        names = [n for n, _l in CREATE_TABS]
+        backdrop.draw_tabs(img, [(l, r) for (l, _t, r, _b) in (self._tabs[n] for n in names)],
+                           names.index(self.create_tab), top, line_y,
+                           radius=tab_h * 0.36, flare=tab_h * 0.2, sy=sy)
+
+    def _style_tabs(self):
+        for name, _label in CREATE_TABS:
+            self.create_canvas.itemconfigure(f"tab_{name}", fill="#ffffff" if name == self.create_tab
+                                             else "#c9ccd1")
+
+    def _tab_at(self, x: int, y: int) -> str | None:
+        for name, (l, t, r, b) in self._tabs.items():
+            if l <= x <= r and t <= y <= b + 2:
+                return name
+        return None
+
+    def _on_tab_click(self, event):
+        name = self._tab_at(event.x, event.y)
+        if name:
+            self.set_create_tab(name)
+
+    def _on_tab_hover(self, event):
+        name = self._tab_at(event.x, event.y)
+        self.create_canvas.configure(cursor="hand2" if name and name != self.create_tab else "")
+        for n, _label in CREATE_TABS:
+            if n != self.create_tab:
+                self.create_canvas.itemconfigure(f"tab_{n}", fill="#ffffff" if n == name else "#c9ccd1")
+
+    def set_create_tab(self, name: str):
+        """Create screen: Import Content (transcribe a file) or Create Cards (saved lines)."""
+        if name == self.create_tab:
+            return
+        stop_wav()
+        self.create_tab = name
+        c = self.create_canvas
+        c.itemconfigure("body_import", state="normal" if name == "import" else "hidden")
+        c.itemconfigure("body_cards", state="normal" if name == "cards" else "hidden")
+        self._style_tabs()
+        c.configure(cursor="")
+        c.refresh()                                   # redraw the tabs: the open one changes
+        if name == "cards":
+            self.saved_window.refresh()
+            self.saved_window.tree.focus_set()
+        self._set_title()
 
     # -------------------------------------------------------------- actions
     def browse(self):
@@ -2066,7 +2155,7 @@ class App(tk.Tk):
         msg = f"Saved {added} line{'s' if added != 1 else ''}"
         if skipped:
             msg += f" ({skipped} already saved)"
-        self.status_var.set(msg + ".  Saved lines → View saved lines... (Ctrl+L)")
+        self.status_var.set(msg + ".  Make cards from them on the Create Cards tab (Ctrl+L).")
         self._mark_saved()
         if self.saved_window:
             self.saved_window.refresh()
@@ -2096,7 +2185,9 @@ class App(tk.Tk):
             setattr(self, attr, cls(self))
 
     def show_saved(self):
-        self._open_window("saved_window", SavedLinesWindow)
+        """Saved lines live on the Create screen's Create Cards tab."""
+        self.show_create()
+        self.set_create_tab("cards")
 
     def show_cards(self):
         self._open_window("cards_window", CardsWindow)
@@ -2164,7 +2255,8 @@ class App(tk.Tk):
         self._set_title()
 
     def _set_title(self):
-        where = {"home": "", "create": " – Create", "study": " – Study",
+        tab = dict(CREATE_TABS).get(getattr(self, "create_tab", ""), "")
+        where = {"home": "", "create": f" – {tab}" if tab else " – Create", "study": " – Study",
                  "profiles": " – Profiles"}.get(self.current_screen, "")
         who = "not signed in" if self.signed_out else self.profile["name"]
         self.title(f"Language Flashcards{where}  ·  {who}")
@@ -2255,7 +2347,8 @@ class App(tk.Tk):
         """Main menu → Sign Out: back to the Profiles screen; the rest of the app
         is locked until a profile signs in."""
         stop_wav()
-        for win in (self.saved_window, self.cards_window, self.deck_window, self.template_window):
+        stop_wav()
+        for win in (self.cards_window, self.deck_window, self.template_window):
             if win and win.winfo_exists():
                 win.close()
                 if win.winfo_exists():   # e.g. unsaved card layout and the user chose Cancel
@@ -2271,11 +2364,13 @@ class App(tk.Tk):
         stop_wav()
         self.signed_out = False
         if p["id"] != self.profile["id"]:
-            for win in (self.saved_window, self.cards_window, self.deck_window):
+            for win in (self.cards_window, self.deck_window):
                 if win and win.winfo_exists():
                     win.close()
             self.profile = p
             self.store = SavedStore(self.profiles.saved_dir(p))
+            self.saved_window.preview.clear()
+            self.saved_window.refresh()            # Create Cards: this profile's saved lines
             self.cards = CardStore(self.profiles.cards_dir(p))
             self.template = templates.load(self.profiles.cards_dir(p))
             if self.template_window and self.template_window.winfo_exists():
