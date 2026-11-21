@@ -36,12 +36,38 @@ from backdrop import DESIGN_W, DESIGN_H
 from cards import ALL
 
 try:
-    from PIL import Image, ImageEnhance, ImageTk
+    import math
+
+    from PIL import Image, ImageDraw, ImageEnhance, ImageTk
 except ImportError:  # no Pillow: plain background, drawn buttons
     Image = None
 
 HEAD_FONT, BODY_FONT = "Tahoma", "Segoe UI"
 HEAD_FILL, HEAD_EDGE = "#dadada", "#6b6b6b"     # headings: light grey with a grey outline
+GEAR, GEAR_HOVER = (214, 216, 220), (255, 255, 255)
+GEAR_SIZE, GEAR_RIGHT, GEAR_TOP = 72, 58, 53     # design px: size; centre from the right edge / top
+
+
+def gear_image(size: int, colour, stroke: float):
+    """An outlined gear (8 teeth, round hole), see-through around the lines.
+    Drawn 4x bigger and shrunk, so the edges are smooth."""
+    k = 4
+    big = size * k
+    c = big / 2
+    r_out, r_root, r_hole = big * 0.47, big * 0.36, big * 0.155
+    w = max(round(stroke * k), 1)
+    pts = []
+    for i in range(8):
+        a = i * math.pi / 4
+        for ang, r in ((a - 0.30, r_root), (a - 0.17, r_out), (a + 0.17, r_out), (a + 0.30, r_root)):
+            pts.append((c + r * math.sin(ang), c - r * math.cos(ang)))
+    mask = Image.new("L", (big, big), 0)
+    d = ImageDraw.Draw(mask)
+    d.line(pts + pts[:1], fill=255, width=w, joint="curve")
+    d.ellipse([c - r_hole, c - r_hole, c + r_hole, c + r_hole], outline=255, width=w)
+    img = Image.new("RGBA", (big, big), colour + (0,))
+    img.putalpha(mask)
+    return img.resize((size, size), Image.LANCZOS)
 PANEL_SHADE = 0.67                              # the stats box: the picture behind it, this bright
 BTN_FACE, BTN_EDGE = "#323335", "#eaeaea"
 
@@ -51,7 +77,7 @@ HEADER_Y, DECK_Y, BUTTONS_Y = 160, 600, 1150
 
 
 class HomeScreen(ttk.Frame):
-    """Main menu. `app` provides: show_study, show_create, show_profiles, sign_out,
+    """Main menu. `app` provides: show_study, show_create, show_profiles, sign_out, show_settings,
     show_deck, choose_deck, new_deck, rename_deck, delete_deck and `cards`."""
 
     def __init__(self, parent, app):
@@ -74,6 +100,12 @@ class HomeScreen(ttk.Frame):
         self._link("change", "change", app.show_profiles)
         c.create_text(0, 0, text="|", fill="#ffffff", anchor="w", tags="bar1")
         self._link("signout", "sign out", app.sign_out)
+        # ---- settings gear (top right)
+        self._gear_imgs = {}
+        c.create_image(0, 0, tags="gear")
+        c.tag_bind("gear", "<Enter>", lambda e: self._gear_hover(True))
+        c.tag_bind("gear", "<Leave>", lambda e: self._gear_hover(False))
+        c.tag_bind("gear", "<Button-1>", lambda e: app.show_settings())
 
         # ---- deck block
         self._outlined("deck_title", text="Deck:")
@@ -157,6 +189,12 @@ class HomeScreen(ttk.Frame):
         if was_down and inside:
             command()
 
+    def _gear_hover(self, on: bool):
+        img = self._gear_imgs.get("hover" if on else "normal")
+        if img is not None:
+            self.canvas.itemconfigure("gear", image=img)
+        self.canvas.configure(cursor="hand2" if on else "")
+
     # ------------------------------------------------------------ deck menu
     def change_deck(self):
         """Change Deck: a menu of the decks, then New / Rename / Delete."""
@@ -224,6 +262,15 @@ class HomeScreen(ttk.Frame):
             c.itemconfigure(tag, font=(BODY_FONT, link))
             c.coords(tag, x, hy(204))
             x = c.bbox(tag)[2] + 9 * s
+
+        # ---- gear, kept at the right edge
+        if Image is not None:
+            g = max(round(GEAR_SIZE * s), 20)
+            stroke = max(3 * s, 1.4)
+            self._gear_imgs = {"normal": ImageTk.PhotoImage(gear_image(g, GEAR, stroke)),
+                               "hover": ImageTk.PhotoImage(gear_image(g, GEAR_HOVER, stroke * 1.15))}
+            c.itemconfigure("gear", image=self._gear_imgs["normal"])
+        c.coords("gear", w - GEAR_RIGHT * s, hy(GEAR_TOP))
 
         # ---- deck block
         self._place_outlined("deck_title", *at(593, 366, DECK_Y), (HEAD_FONT, px(55), "bold"), 2 * s)

@@ -13,6 +13,8 @@ timestamped transcript. Built on [faster-whisper](https://github.com/SYSTRAN/fas
 
 Double-click **`run.bat`**. The app opens at the **main menu**:
 
+- **⚙ gear** (top right) — a small **Settings** window: the **window size when the app opens**
+  (type a width and height, or **Use the current size**; it applies the next time the app opens).
 - **Welcome, <profile>** (top left) — **change** opens the Profiles screen; **sign out** returns to it and
   locks the rest of the app until a profile signs in.
 - **Deck** — the name of the deck being studied, with its New / Due / Total.
@@ -205,7 +207,7 @@ Command line alternative:
 ## Files
 
 - `transcriber.py` — engine; returns a `Transcript` (segments → words, with times). Later stages (audio clips, screenshots, flashcards) build on this and on `output\*.json`.
-- `settings.py` — settings remembered between runs (`settings.json`), e.g. the screenshot size.
+- `settings.py` — settings remembered between runs (`settings.json`): the window size and the screenshot size.
 - `media.py` — cuts audio clips (44.1 kHz WAV, with 0.2 s / 0.3 s padding) and screenshots.
 - `saved.py` — the saved-lines library.
 - `cards.py` — the flashcard deck.
@@ -218,7 +220,7 @@ Command line alternative:
   sits on a raised panel, and on Create the controls sit on one panel, with the picture around them.
   `draw_tabs` draws Create's tabs on the white line, with the line's shadow following their outline.
 - `assets\` — the background picture, the dots band and the main menu's button picture.
-- The window opens at 1280 × 1000. If it is narrower than 1180 px, it widens by itself for the Create screen and goes back afterwards.
+- The window opens at 1280 × 1000 (change it in Settings, the gear on the main menu). If it is narrower than 1180 px, it widens by itself for the Create screen and goes back afterwards.
 - `subtitles.py` — reads .srt / .vtt / .ass subtitle files as lines.
 - `theme.py` — the dark color scheme; every color is defined at the top, so it's easy to adjust.
 - `templates.py`, `card_view.py`, `template_editor.py` — card layouts: the data, drawing a card, and the drag-and-drop editor.

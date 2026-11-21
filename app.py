@@ -1406,16 +1406,80 @@ class StudyScreen(ttk.Frame):
         self.sync()
 
 
+# ------------------------------------------------------------ settings
+MIN_WINDOW = (640, 480)
+
+
+class SettingsDialog(tk.Toplevel):
+    """Small Settings window (the gear on the main menu). For now: the window's
+    size when the app opens. Saved to settings.json."""
+
+    def __init__(self, app: "App"):
+        super().__init__(app)
+        self.app = app
+        self.title("Settings")
+        theme.dark_title_bar(self)
+        self.transient(app)
+        self.resizable(False, False)
+        body = ttk.Frame(self, padding=(20, 16, 20, 16))
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Window size when the app opens", font=("Segoe UI", 10, "bold")).grid(
+            row=0, column=0, columnspan=5, sticky="w", pady=(0, 8))
+        w, h = app.default_size()
+        self.w_var, self.h_var = tk.StringVar(value=str(w)), tk.StringVar(value=str(h))
+        ttk.Label(body, text="Width:").grid(row=1, column=0, sticky="e")
+        self.w_entry = ttk.Entry(body, textvariable=self.w_var, width=7)
+        self.w_entry.grid(row=1, column=1, sticky="w", padx=(6, 0))
+        ttk.Label(body, text="Height:").grid(row=1, column=2, sticky="e", padx=(16, 0))
+        ttk.Entry(body, textvariable=self.h_var, width=7).grid(row=1, column=3, sticky="w", padx=(6, 0))
+        ttk.Label(body, text="pixels").grid(row=1, column=4, sticky="w", padx=(6, 0))
+        ttk.Button(body, text="Use the current size", command=self.use_current).grid(
+            row=2, column=0, columnspan=5, sticky="w", pady=(10, 0))
+        ttk.Label(body, text="Takes effect the next time the app opens.", foreground=theme.SUBTLE).grid(
+            row=3, column=0, columnspan=5, sticky="w", pady=(10, 0))
+        buttons = ttk.Frame(body)
+        buttons.grid(row=4, column=0, columnspan=5, sticky="e", pady=(16, 0))
+        ttk.Button(buttons, text="Save", command=self.save).pack(side="left")
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="left", padx=(6, 0))
+        self.bind("<Return>", lambda e: self.save())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.update_idletasks()
+        x = app.winfo_rootx() + (app.winfo_width() - self.winfo_reqwidth()) // 2
+        y = app.winfo_rooty() + (app.winfo_height() - self.winfo_reqheight()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        self.w_entry.focus_set()
+        self.w_entry.select_range(0, "end")
+
+    def use_current(self):
+        self.app.update_idletasks()
+        self.w_var.set(str(self.app.winfo_width()))
+        self.h_var.set(str(self.app.winfo_height()))
+
+    def save(self):
+        try:
+            w, h = int(self.w_var.get().strip()), int(self.h_var.get().strip())
+        except ValueError:
+            w = h = 0
+        if not (MIN_WINDOW[0] <= w <= 7680 and MIN_WINDOW[1] <= h <= 4320):
+            messagebox.showwarning("Settings", f"Type the window size in whole pixels: width "
+                                   f"{MIN_WINDOW[0]} to 7680, height {MIN_WINDOW[1]} to 4320.", parent=self)
+            return
+        self.app.settings.set("window_width", w)
+        self.app.settings.set("window_height", h)
+        self.destroy()
+
+
 # ------------------------------------------------------------ main window
 class App(tk.Tk):
     def __init__(self, initial_file: str | None = None):
         super().__init__()
         self.title("Language Flashcards")
-        # opens 1280 x 1000, centred on the screen
-        width, height = 1280, 1000
+        self.settings = Settings(APP_DIR)
+        # opens at the size chosen in Settings (1280 x 1000 at first), centred on the screen
+        width, height = self.default_size()
         self.geometry(f"{width}x{height}+{max((self.winfo_screenwidth() - width) // 2, 0)}"
                       f"+{max((self.winfo_screenheight() - height) // 2 - 30, 0)}")
-        self.minsize(640, 480)
+        self.minsize(*MIN_WINDOW)
         theme.apply(self)  # dark color scheme; must come before any widgets are built
 
         self.events: queue.Queue = queue.Queue()
@@ -1432,7 +1496,6 @@ class App(tk.Tk):
         # Profiles: each has its own saved lines, cards and decks. Start with the
         # default profile (or the first one, until the user picks on the Profiles screen).
         self.profiles = ProfileStore(APP_DIR)
-        self.settings = Settings(APP_DIR)
         self.profile = self.profiles.get(self.profiles.default) or self.profiles.profiles[0]
         self.store = SavedStore(self.profiles.saved_dir(self.profile))
         self.saved_window: SavedLinesPanel | None = None   # the Create Cards tab (built with the Create screen)
@@ -2273,6 +2336,23 @@ class App(tk.Tk):
     def _build_home(self):
         self.home = HomeScreen(self.home_screen, self)
         self.home.pack(fill="both", expand=True)
+
+    def default_size(self) -> tuple[int, int]:
+        """The window's size when the app opens (Settings)."""
+        try:
+            w, h = int(self.settings.get("window_width")), int(self.settings.get("window_height"))
+        except (TypeError, ValueError):
+            w, h = 1280, 1000
+        return max(w, MIN_WINDOW[0]), max(h, MIN_WINDOW[1])
+
+    def show_settings(self):
+        """The gear on the main menu: a small Settings window."""
+        win = getattr(self, "settings_window", None)
+        if win and win.winfo_exists():
+            win.lift()
+            win.focus_force()
+            return
+        self.settings_window = SettingsDialog(self)
 
     CREATE_MIN_WIDTH = 1180   # the Create screen (table + preview) needs more room than the 4:5 menu
 

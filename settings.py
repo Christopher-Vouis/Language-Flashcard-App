@@ -13,6 +13,8 @@ DEFAULTS = {
     "shot_match_input": True,   # screenshots at the video's own resolution
     "shot_width": "",           # ... otherwise this size (as typed)
     "shot_height": "",
+    "window_width": 1280,       # the window's size when the app opens
+    "window_height": 1000,
 }
 
 
