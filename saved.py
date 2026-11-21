@@ -15,7 +15,9 @@ import shutil
 import time
 import uuid
 
-from media import safe_name
+from collections import Counter
+
+from media import safe_name, shared_copy
 
 
 class SavedStore:
@@ -54,6 +56,8 @@ class SavedStore:
         existing = {self._key(e["source_file"], e["start"], e["end"], e["text"]) for e in self.entries}
         os.makedirs(self.media_dir, exist_ok=True)
         base = safe_name(os.path.splitext(os.path.basename(transcript.source_file))[0])
+        # a picture used by several lines (Use one image for all) is copied once and shared
+        uses = Counter(os.path.normcase(p) for p in shot_paths.values() if p)
         added = skipped = 0
         for seg in segments:
             if self._key(transcript.source_file, seg.start, seg.end, seg.text) in existing:
@@ -77,6 +81,9 @@ class SavedStore:
                                     ("screenshot", shot_paths, ".jpg")):
                 src = paths.get(seg.index)
                 if src and os.path.isfile(src):
+                    if key == "screenshot" and uses[os.path.normcase(src)] > 1:
+                        entry[key] = f"media/{shared_copy(src, self.media_dir)}"
+                        continue
                     name = f"{base}_{uid}{ext}"
                     shutil.copy2(src, os.path.join(self.media_dir, name))
                     entry[key] = f"media/{name}"
@@ -107,8 +114,11 @@ class SavedStore:
         keep, gone = [], []
         for e in self.entries:
             (gone if e["id"] in ids else keep).append(e)
+        in_use = {e.get(k) for e in keep for k in ("audio_clip", "screenshot")}
         for e in gone:
             for key in ("audio_clip", "screenshot"):
+                if e.get(key) in in_use:       # shared with a line that's kept
+                    continue
                 p = self.abs_path(e.get(key, ""))
                 if p and os.path.isfile(p):
                     try:

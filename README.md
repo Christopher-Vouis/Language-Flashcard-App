@@ -60,6 +60,11 @@ On **Import Content**: **Browse...** → pick a file → **Transcribe**.
 - With **Audio clips + screenshots** ticked (default), each line then gets an audio clip
   and, for video files, a screenshot from the middle of the line. The **Media** column shows
   ♪ (clip) and ▣ (screenshot) as they're ready.
+- **Use one image for all** (instead of **Audio clips + screenshots**; ticking one unticks the other):
+  an **Image:** line appears — **Browse...** for a picture (PNG, JPG, GIF, WebP, BMP). Every line still
+  gets its audio clip, and that one picture as its screenshot. The picture is copied into the
+  transcript's `media\` folder once (not if it's already there) and all the lines share that file;
+  saved lines and cards made from them share one copy too, which is only deleted once nothing uses it.
 - **Screenshot Resolution** (under the preview, above Play): with **Match input resolution** ticked
   (the default) screenshots are the video's own size; untick it and type **X** and **Y** (in pixels)
   to save them at that size instead. Your choice is remembered (`settings.json`).

@@ -13,8 +13,10 @@ start offset in the container.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
+import shutil
 import wave
 from typing import Callable, Optional
 
@@ -165,6 +167,34 @@ def extract_screenshots(
                 continue
 
 
+# ------------------------------------------------------------ one image for every line
+IMAGE_TYPES = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+
+
+def shared_copy(src: str, dest_dir: str) -> str:
+    """Put an image in dest_dir ONCE, so every line using it shares one file.
+    A file that's already in dest_dir is used as it is; otherwise the copy is
+    named after its contents (img_<hash>.ext), so copying the same picture
+    again reuses the same file. Returns the file's name."""
+    os.makedirs(dest_dir, exist_ok=True)
+    if os.path.normcase(os.path.dirname(os.path.abspath(src))) == os.path.normcase(os.path.abspath(dest_dir)):
+        return os.path.basename(src)
+    h = hashlib.sha1()
+    with open(src, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    name = f"img_{h.hexdigest()[:16]}{os.path.splitext(src)[1].lower() or '.jpg'}"
+    dst = os.path.join(dest_dir, name)
+    if not os.path.isfile(dst):
+        shutil.copy2(src, dst)
+    return name
+
+
+def is_shared(name: str) -> bool:
+    """A file made by shared_copy (used by several lines / cards)."""
+    return os.path.basename(name).startswith("img_")
+
+
 # ------------------------------------------------------------ orchestration
 def build_media(
     transcript,
@@ -173,10 +203,13 @@ def build_media(
     on_status: Optional[Callable[[str], None]] = None,
     should_stop: Optional[Callable[[], bool]] = None,
     shot_size: Optional[tuple[int, int]] = None,
+    image: Optional[str] = None,
 ) -> None:
     """Create clips/screenshots for every segment and store their paths
     (relative to the transcript's folder) on each segment. shot_size =
-    (width, height) for the screenshots; None = the video's own resolution."""
+    (width, height) for the screenshots; None = the video's own resolution.
+    image = a picture to use as every line's screenshot instead (copied into
+    media_dir once; all lines share that one file)."""
     status = on_status or (lambda m: None)
     os.makedirs(media_dir, exist_ok=True)
     src = transcript.source_file
@@ -204,6 +237,11 @@ def build_media(
     offset = extract_audio_clips(src, clips, done_audio, should_stop)
 
     if should_stop and should_stop():
+        return
+    if image:
+        name = shared_copy(image, media_dir)
+        for s in transcript.segments:
+            done_shot(s.index, os.path.join(media_dir, name))
         return
     if not has_video(src):
         return

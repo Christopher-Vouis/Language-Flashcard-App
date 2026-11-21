@@ -1514,6 +1514,8 @@ class App(tk.Tk):
         self.status_var = tk.StringVar(value="Choose an audio or video file to begin.")
         self.ts_var = tk.BooleanVar(value=True)
         self.media_var = tk.BooleanVar(value=True)
+        self.one_image_var = tk.BooleanVar(value=False)   # Use one image for all (instead of screenshots)
+        self.image_var = tk.StringVar()
         self.music_var = tk.BooleanVar(value=False)
         self.subs_var = tk.StringVar()
         self.subs_offset_var = tk.StringVar(value="0.0")
@@ -1616,13 +1618,22 @@ class App(tk.Tk):
                      width=6, state="readonly").pack(side="left", **pad)
         ttk.Checkbutton(opts, text="Music mode",
                         variable=self.music_var).pack(side="left", padx=(10, 0))
-        ttk.Checkbutton(opts, text="Audio clips + screenshots",
-                        variable=self.media_var).pack(side="left", padx=(10, 0))
+        ttk.Checkbutton(opts, text="Audio clips + screenshots", variable=self.media_var,
+                        command=lambda: self._media_choice("shots")).pack(side="left", padx=(10, 0))
+        ttk.Checkbutton(opts, text="Use one image for all", variable=self.one_image_var,
+                        command=lambda: self._media_choice("image")).pack(side="left", padx=(10, 0))
 
         self.go_btn = ttk.Button(opts, text="Transcribe", command=self.start, width=14)
         self.go_btn.pack(side="left", padx=(16, 4))
         self.stop_btn = ttk.Button(opts, text="Stop", command=self.stop, state="disabled")
         self.stop_btn.pack(side="left")
+
+        # --- image row (only while "Use one image for all" is ticked): looks like the File row
+        self.image_row = ttk.Frame(body, padding=(10, 0, 10, 4))
+        ttk.Label(self.image_row, text="Image:").pack(side="left")
+        ttk.Entry(self.image_row, textvariable=self.image_var).pack(side="left", fill="x", expand=True, **pad)
+        ttk.Button(self.image_row, text="Browse...", command=self.browse_image).pack(side="left")
+        self._opts_row = opts
 
         # --- progress
         prog = ttk.Frame(body, padding=(10, 0, 10, 4))
@@ -1863,6 +1874,43 @@ class App(tk.Tk):
         if path:
             self.file_var.set(path)
 
+    def _media_choice(self, which: str):
+        """"Audio clips + screenshots" and "Use one image for all" exclude each
+        other; the Image row shows only while "Use one image for all" is ticked."""
+        if which == "image" and self.one_image_var.get():
+            self.media_var.set(False)
+        elif which == "shots" and self.media_var.get():
+            self.one_image_var.set(False)
+        if self.one_image_var.get():
+            self.image_row.pack(fill="x", after=self._opts_row)
+        else:
+            self.image_row.pack_forget()
+
+    def browse_image(self):
+        start = os.path.dirname(self.image_var.get().strip().strip('"')) or None
+        path = filedialog.askopenfilename(
+            title="Choose the image for every line", initialdir=start,
+            filetypes=[("Images", " ".join(f"*{e}" for e in media.IMAGE_TYPES)), ("All files", "*.*")])
+        if path:
+            self.image_var.set(path)
+
+    def _one_image(self):
+        """The picture for "Use one image for all": its path, None when that
+        box isn't ticked, or False (after telling the user) if it isn't usable."""
+        if not self.one_image_var.get():
+            return None
+        path = self.image_var.get().strip().strip('"')
+        if not path:
+            msg = "Choose the image to use for every line (Browse... on the Image line)."
+        elif not os.path.isfile(path):
+            msg = "The image file doesn't exist. Choose another one."
+        elif os.path.splitext(path)[1].lower() not in media.IMAGE_TYPES:
+            msg = f"That isn't a picture file. Choose one of: {', '.join(media.IMAGE_TYPES)}"
+        else:
+            return path
+        messagebox.showwarning("Use one image for all", msg)
+        return False
+
     def browse_subs(self):
         start_dir = os.path.dirname(self.file_var.get().strip().strip('"')) or None
         path = filedialog.askopenfilename(title="Choose a subtitle file",
@@ -1900,6 +1948,9 @@ class App(tk.Tk):
         shot_size = self._shot_size() if self.media_var.get() else None
         if shot_size is False:
             return
+        image = self._one_image()
+        if image is False:
+            return
         stop_wav()
         self._clear_results()
         self.stop_flag.clear()
@@ -1912,8 +1963,8 @@ class App(tk.Tk):
         self.used_subs = bool(subs_path)
         self.music_used = self.music_var.get() and not subs_path
         args = (path, self.model_var.get(), self._language_code(),
-                self.device_var.get(), self.media_var.get(), self.music_used,
-                subs_path, subs_offset, shot_size)
+                self.device_var.get(), self.media_var.get() or bool(image), self.music_used,
+                subs_path, subs_offset, shot_size, image)
         self.worker = threading.Thread(target=self._run, args=args, daemon=True)
         self.worker.start()
 
@@ -1922,7 +1973,7 @@ class App(tk.Tk):
         self.status_var.set("Stopping...")
 
     def _run(self, path, model, lang, device, want_media, music, subs_path="", subs_offset=0.0,
-             shot_size=None):
+             shot_size=None, image=None):
         """Runs in a background thread; talks to the UI via self.events."""
         put = self.events.put
         try:
@@ -1954,6 +2005,7 @@ class App(tk.Tk):
                         on_status=lambda m: put(("status", m)),
                         should_stop=self.stop_flag.is_set,
                         shot_size=shot_size,
+                        image=image,
                     )
                 except Exception as e:  # noqa: BLE001 - keep the transcript anyway
                     media_error = e

@@ -19,7 +19,7 @@ import time
 import uuid
 
 import srs
-from media import safe_name
+from media import is_shared, safe_name, shared_copy
 
 FIELDS = ("target_word", "reading", "definition")
 IMAGE_TYPES = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
@@ -232,6 +232,10 @@ class CardStore:
         for key, ext in (("audio_clip", ".wav"), ("screenshot", ".jpg")):
             rel = line.get(key, "")
             src = os.path.join(line_media_root, rel) if rel else ""
+            if src and os.path.isfile(src) and key == "screenshot" and is_shared(rel):
+                # one picture shared by many lines: the cards share one copy too
+                card[key] = f"media/{shared_copy(src, self.media_dir)}"
+                continue
             if src and os.path.isfile(src):
                 name = f"card_{base}_{uid}{ext}"
                 shutil.copy2(src, os.path.join(self.media_dir, name))
@@ -253,14 +257,23 @@ class CardStore:
         self._write()
         return True
 
+    @staticmethod
+    def _media_in_use(cards) -> set:
+        """Media files these cards use (shared pictures can be used by many)."""
+        used = set()
+        for c in cards:
+            used |= {c.get("audio_clip", ""), c.get("screenshot", "")} | {i["path"] for i in card_images(c)}
+        return used
+
     def remove(self, ids) -> int:
         ids = set(ids)
         keep, gone = [], []
         for c in self.cards:
             (gone if c["id"] in ids else keep).append(c)
+        in_use = self._media_in_use(keep)
         for c in gone:
             paths = {c.get("audio_clip", ""), c.get("screenshot", "")} | {i["path"] for i in card_images(c)}
-            for rel in paths:
+            for rel in paths - in_use:          # (a shared picture stays while a card uses it)
                 p = self.abs_path(rel)
                 if p and os.path.isfile(p):
                     try:
@@ -302,9 +315,12 @@ class CardStore:
         images = card_images(card)
         gone = [i for i in images if i["id"] == image_id]
         card["images"] = [i for i in images if i["id"] != image_id]
+        in_use = self._media_in_use(c for c in self.cards if c is not card)
         for img in gone:
             if img["path"] == card.get("screenshot"):
                 card["screenshot"] = ""
+            if img["path"] in in_use:           # another card uses the same picture
+                continue
             p = self.abs_path(img["path"])
             if p and os.path.isfile(p):
                 try:
