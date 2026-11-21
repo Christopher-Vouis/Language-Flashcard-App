@@ -218,7 +218,7 @@ Command line alternative:
   sits on a raised panel, and on Create the controls sit on one panel, with the picture around them.
   `draw_tabs` draws Create's tabs on the white line, with the line's shadow following their outline.
 - `assets\` — the background picture, the dots band and the main menu's button picture.
-- The window opens at 800 × 600; it widens by itself for the Create screen and goes back afterwards.
+- The window opens at 1280 × 720. If it is narrower than 1180 px, it widens by itself for the Create screen and goes back afterwards.
 - `subtitles.py` — reads .srt / .vtt / .ass subtitle files as lines.
 - `theme.py` — the dark color scheme; every color is defined at the top, so it's easy to adjust.
 - `templates.py`, `card_view.py`, `template_editor.py` — card layouts: the data, drawing a card, and the drag-and-drop editor.

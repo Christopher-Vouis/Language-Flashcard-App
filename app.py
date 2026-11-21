@@ -1411,8 +1411,8 @@ class App(tk.Tk):
     def __init__(self, initial_file: str | None = None):
         super().__init__()
         self.title("Language Flashcards")
-        # opens 800 x 600, centred on the screen
-        width, height = 800, 600
+        # opens 1280 x 720, centred on the screen
+        width, height = 1280, 720
         self.geometry(f"{width}x{height}+{max((self.winfo_screenwidth() - width) // 2, 0)}"
                       f"+{max((self.winfo_screenheight() - height) // 2 - 30, 0)}")
         self.minsize(640, 480)
