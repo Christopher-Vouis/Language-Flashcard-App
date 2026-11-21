@@ -5,6 +5,7 @@ saved/
 cards/
 profiles/
 profiles.json
+settings.json
 *.wav
 *.jpg
 *.jpeg

@@ -21,7 +21,6 @@ from typing import Callable, Optional
 CLIP_RATE = 44100      # Hz, mono 16-bit WAV
 PAD_BEFORE = 0.20      # seconds added before each line
 PAD_AFTER = 0.30       # seconds added after each line
-SHOT_MAX_WIDTH = 1280  # screenshots are scaled down to at most this width
 ATTACHED_PIC = 0x0400  # FFmpeg disposition flag: cover art in an audio file
 
 
@@ -130,9 +129,12 @@ def extract_screenshots(
     time_offset: float = 0.0,
     on_shot: Optional[Callable[[int, str], None]] = None,
     should_stop: Optional[Callable[[], bool]] = None,
+    size: Optional[tuple[int, int]] = None,
 ) -> None:
-    """Save a JPEG for each (index, time_seconds, out_path)."""
+    """Save a JPEG for each (index, time_seconds, out_path). size = (width,
+    height) to save them at; None = the video's own resolution."""
     import av
+    from PIL import Image
 
     with av.open(path) as container:
         vs = next((s for s in container.streams.video), None)
@@ -154,9 +156,8 @@ def extract_screenshots(
                 if img is None:
                     continue
                 pil = img.to_image()
-                if pil.width > SHOT_MAX_WIDTH:
-                    h = round(pil.height * SHOT_MAX_WIDTH / pil.width)
-                    pil = pil.resize((SHOT_MAX_WIDTH, h))
+                if size and tuple(size) != pil.size:
+                    pil = pil.resize(tuple(size), Image.LANCZOS)
                 pil.save(out, "JPEG", quality=85)
                 if on_shot:
                     on_shot(i, out)
@@ -171,9 +172,11 @@ def build_media(
     on_item: Optional[Callable[[str, int, str], None]] = None,
     on_status: Optional[Callable[[str], None]] = None,
     should_stop: Optional[Callable[[], bool]] = None,
+    shot_size: Optional[tuple[int, int]] = None,
 ) -> None:
     """Create clips/screenshots for every segment and store their paths
-    (relative to the transcript's folder) on each segment."""
+    (relative to the transcript's folder) on each segment. shot_size =
+    (width, height) for the screenshots; None = the video's own resolution."""
     status = on_status or (lambda m: None)
     os.makedirs(media_dir, exist_ok=True)
     src = transcript.source_file
@@ -215,4 +218,4 @@ def build_media(
          os.path.join(media_dir, f"{base}_{s.index + 1:04d}.jpg"))
         for s in transcript.segments
     ]
-    extract_screenshots(src, shots, offset, done_shot, should_stop)
+    extract_screenshots(src, shots, offset, done_shot, should_stop, size=shot_size)

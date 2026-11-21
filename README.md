@@ -58,6 +58,9 @@ On **Import Content**: **Browse...** → pick a file → **Transcribe**.
 - With **Audio clips + screenshots** ticked (default), each line then gets an audio clip
   and, for video files, a screenshot from the middle of the line. The **Media** column shows
   ♪ (clip) and ▣ (screenshot) as they're ready.
+- **Screenshot Resolution** (under the preview, above Play): with **Match input resolution** ticked
+  (the default) screenshots are the video's own size; untick it and type **X** and **Y** (in pixels)
+  to save them at that size instead. Your choice is remembered (`settings.json`).
 - **Select a line** to see its screenshot and text in the preview panel on the right.
   **▶ Play** (or Space / double-click) plays its clip; ↑/↓ move between lines;
   "Auto-play on select" plays each line as you move to it.
@@ -202,6 +205,7 @@ Command line alternative:
 ## Files
 
 - `transcriber.py` — engine; returns a `Transcript` (segments → words, with times). Later stages (audio clips, screenshots, flashcards) build on this and on `output\*.json`.
+- `settings.py` — settings remembered between runs (`settings.json`), e.g. the screenshot size.
 - `media.py` — cuts audio clips (44.1 kHz WAV, with 0.2 s / 0.3 s padding) and screenshots.
 - `saved.py` — the saved-lines library.
 - `cards.py` — the flashcard deck.

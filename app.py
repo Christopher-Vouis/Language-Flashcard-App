@@ -18,6 +18,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import backdrop
 import media
+from settings import Settings
 import srs
 import templates
 from audio import play_wav, stop_wav
@@ -215,6 +216,7 @@ class PreviewPanel(ttk.Frame):
             ttk.Label(self, text="Tip: ↑/↓ to move, Space or double-click to play.",
                       foreground=theme.SUBTLE).pack(side="bottom", anchor="w")
         controls.pack(side="bottom", fill="x", pady=(0, 4))
+        self.controls = controls
         self.text_label.pack(side="bottom", anchor="w", fill="x", pady=(2, 8))
         self.meta_label.pack(side="bottom", anchor="w", pady=(8, 0))
         holder.pack(side="top", fill="both", expand=True)
@@ -1430,6 +1432,7 @@ class App(tk.Tk):
         # Profiles: each has its own saved lines, cards and decks. Start with the
         # default profile (or the first one, until the user picks on the Profiles screen).
         self.profiles = ProfileStore(APP_DIR)
+        self.settings = Settings(APP_DIR)
         self.profile = self.profiles.get(self.profiles.default) or self.profiles.profiles[0]
         self.store = SavedStore(self.profiles.saved_dir(self.profile))
         self.saved_window: SavedLinesPanel | None = None   # the Create Cards tab (built with the Create screen)
@@ -1639,6 +1642,7 @@ class App(tk.Tk):
         # --- preview panel
         self.preview = PreviewPanel(main, self.autoplay_var)
         main.add(self.preview, weight=2)
+        self._build_shot_size(self.preview)
 
         # --- bottom buttons
         bottom = ttk.Frame(body, padding=(10, 4, 10, 6))
@@ -1652,6 +1656,58 @@ class App(tk.Tk):
                    command=lambda: open_folder(OUTPUT_DIR)).pack(side="left")
         self.info_var = tk.StringVar()
         ttk.Label(bottom, textvariable=self.info_var, foreground=theme.MUTED).pack(side="right")
+
+    def _build_shot_size(self, panel):
+        """Screenshot resolution, under the preview: the video's own (Match input
+        resolution) or a size typed in. Remembered between runs (settings.json)."""
+        st = self.settings
+        self.shot_match_var = tk.BooleanVar(value=bool(st.get("shot_match_input")))
+        self.shot_w_var = tk.StringVar(value=str(st.get("shot_width") or ""))
+        self.shot_h_var = tk.StringVar(value=str(st.get("shot_height") or ""))
+        box = ttk.Frame(panel)
+        box.pack(side="bottom", fill="x", pady=(10, 8), after=panel.controls)   # just above Play / Stop
+        small = ("Segoe UI", 9)
+        ttk.Label(box, text="Screenshot Resolution:", font=small).grid(row=0, column=0, columnspan=5,
+                                                                      sticky="w", pady=(0, 3))
+        self.shot_entries = []
+        for col, (label, var) in enumerate((("X:", self.shot_w_var), ("Y:", self.shot_h_var))):
+            ttk.Label(box, text=label, font=small).grid(row=1, column=col * 2, sticky="e",
+                                                        padx=(8 if col == 0 else 18, 4))
+            e = ttk.Entry(box, textvariable=var, width=7, font=small)
+            e.grid(row=1, column=col * 2 + 1, sticky="w")
+            self.shot_entries.append(e)
+        ttk.Checkbutton(box, text="Match input resolution", variable=self.shot_match_var,
+                        command=self._shot_size_changed, style="Small.TCheckbutton").grid(
+            row=1, column=4, sticky="w", padx=(22, 0))
+        ttk.Style(self).configure("Small.TCheckbutton", font=small)
+        self.shot_w_var.trace_add("write", lambda *a: self._shot_size_changed())
+        self.shot_h_var.trace_add("write", lambda *a: self._shot_size_changed())
+        self._shot_size_changed()
+
+    def _shot_size_changed(self):
+        match = self.shot_match_var.get()
+        for e in self.shot_entries:
+            e.config(state="disabled" if match else "normal")
+        st = self.settings
+        st.set("shot_match_input", match)
+        st.set("shot_width", self.shot_w_var.get().strip())
+        st.set("shot_height", self.shot_h_var.get().strip())
+
+    def _shot_size(self):
+        """(width, height) for the screenshots, None = the video's own size,
+        or False (after telling the user) if what's typed isn't usable."""
+        if self.shot_match_var.get():
+            return None
+        try:
+            size = (int(self.shot_w_var.get().strip()), int(self.shot_h_var.get().strip()))
+        except ValueError:
+            size = (0, 0)
+        if not all(16 <= v <= 8192 for v in size):
+            messagebox.showwarning("Screenshot resolution",
+                                   "Type the screenshot size in whole pixels, e.g. X 1280 and Y 720 "
+                                   "(16 to 8192), or tick Match input resolution.")
+            return False
+        return size
 
     def _layout_create(self, w: int, h: int, dots_h: int, header_h: int) -> list[dict]:
         c = self.create_canvas
@@ -1778,6 +1834,9 @@ class App(tk.Tk):
         except ValueError:
             messagebox.showwarning("Offset", "The subtitle offset must be a number of seconds, e.g. 1.5 or -0.8.")
             return
+        shot_size = self._shot_size() if self.media_var.get() else None
+        if shot_size is False:
+            return
         stop_wav()
         self._clear_results()
         self.stop_flag.clear()
@@ -1791,7 +1850,7 @@ class App(tk.Tk):
         self.music_used = self.music_var.get() and not subs_path
         args = (path, self.model_var.get(), self._language_code(),
                 self.device_var.get(), self.media_var.get(), self.music_used,
-                subs_path, subs_offset)
+                subs_path, subs_offset, shot_size)
         self.worker = threading.Thread(target=self._run, args=args, daemon=True)
         self.worker.start()
 
@@ -1799,7 +1858,8 @@ class App(tk.Tk):
         self.stop_flag.set()
         self.status_var.set("Stopping...")
 
-    def _run(self, path, model, lang, device, want_media, music, subs_path="", subs_offset=0.0):
+    def _run(self, path, model, lang, device, want_media, music, subs_path="", subs_offset=0.0,
+             shot_size=None):
         """Runs in a background thread; talks to the UI via self.events."""
         put = self.events.put
         try:
@@ -1830,6 +1890,7 @@ class App(tk.Tk):
                         on_item=lambda kind, i, p: put(("media", kind, i, p)),
                         on_status=lambda m: put(("status", m)),
                         should_stop=self.stop_flag.is_set,
+                        shot_size=shot_size,
                     )
                 except Exception as e:  # noqa: BLE001 - keep the transcript anyway
                     media_error = e
