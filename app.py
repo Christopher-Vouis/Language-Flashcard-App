@@ -23,6 +23,7 @@ if __name__ == "__main__":
 
 import backdrop
 import media
+import shortcuts
 from settings import Settings
 import srs
 import templates
@@ -1415,6 +1416,20 @@ class StudyScreen(ttk.Frame):
 MIN_WINDOW = (640, 480)
 
 
+def set_window_icon(root: tk.Tk) -> None:
+    """The app's icon (assets/app.ico) on its windows and taskbar button."""
+    ico = shortcuts.ICON
+    try:
+        root.iconbitmap(default=ico)              # Windows: every window of the app
+    except tk.TclError:
+        try:
+            if Image is not None:                 # elsewhere: the same picture
+                root._icon = ImageTk.PhotoImage(Image.open(ico))
+                root.iconphoto(True, root._icon)
+        except Exception:  # noqa: BLE001 - an icon is never worth failing over
+            pass
+
+
 class SettingsDialog(tk.Toplevel):
     """Small Settings window (the gear on the main menu). For now: the window's
     size when the app opens. Saved to settings.json."""
@@ -1442,8 +1457,14 @@ class SettingsDialog(tk.Toplevel):
             row=2, column=0, columnspan=5, sticky="w", pady=(10, 0))
         ttk.Label(body, text="Takes effect the next time the app opens.", foreground=theme.SUBTLE).grid(
             row=3, column=0, columnspan=5, sticky="w", pady=(10, 0))
+        if shortcuts.supported():
+            ttk.Separator(body).grid(row=4, column=0, columnspan=5, sticky="ew", pady=(16, 12))
+            ttk.Label(body, text="Shortcuts", font=("Segoe UI", 10, "bold")).grid(
+                row=5, column=0, columnspan=5, sticky="w", pady=(0, 6))
+            ttk.Button(body, text="Create desktop and Start menu shortcuts", command=self.make_shortcuts).grid(
+                row=6, column=0, columnspan=5, sticky="w")
         buttons = ttk.Frame(body)
-        buttons.grid(row=4, column=0, columnspan=5, sticky="e", pady=(16, 0))
+        buttons.grid(row=7, column=0, columnspan=5, sticky="e", pady=(16, 0))
         ttk.Button(buttons, text="Save", command=self.save).pack(side="left")
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="left", padx=(6, 0))
         self.bind("<Return>", lambda e: self.save())
@@ -1454,6 +1475,15 @@ class SettingsDialog(tk.Toplevel):
         self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
         self.w_entry.focus_set()
         self.w_entry.select_range(0, "end")
+
+    def make_shortcuts(self):
+        try:
+            made = shortcuts.create()
+        except OSError as e:
+            messagebox.showerror("Shortcuts", f"The shortcuts couldn't be made:\n\n{e}", parent=self)
+            return
+        self.app.settings.set("shortcuts_made", True)
+        messagebox.showinfo("Shortcuts", "Made (or updated):\n\n" + "\n".join(made), parent=self)
 
     def use_current(self):
         self.app.update_idletasks()
@@ -1485,6 +1515,7 @@ class App(tk.Tk):
         self.geometry(f"{width}x{height}+{max((self.winfo_screenwidth() - width) // 2, 0)}"
                       f"+{max((self.winfo_screenheight() - height) // 2 - 30, 0)}")
         self.minsize(*MIN_WINDOW)
+        set_window_icon(self)
         theme.apply(self)  # dark color scheme; must come before any widgets are built
 
         self.events: queue.Queue = queue.Queue()
@@ -1549,6 +1580,34 @@ class App(tk.Tk):
         self.subs_var.trace_add("write", self._on_subs_changed)
         self.after(100, self._poll_events)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.after(1500, self._first_run_shortcuts)
+
+    def _first_run_shortcuts(self):
+        """The first time the app runs (on Windows): put shortcuts on the desktop
+        and in the Start menu. Only ever once, so a deleted shortcut stays deleted;
+        Settings can make them again."""
+        if not shortcuts.supported() or self.settings.get("shortcuts_made"):
+            return
+        self.settings.set("shortcuts_made", True)
+        result: list = []
+
+        def work():
+            try:
+                result.append(shortcuts.create())
+            except OSError as e:
+                result.append(e)
+
+        def done():
+            if not result:
+                self.after(300, done)
+                return
+            if isinstance(result[0], list):
+                messagebox.showinfo("Shortcuts", "Added a \"Language Flashcards\" shortcut to your desktop "
+                                    "and Start menu, so you can open the app from there (or pin it to "
+                                    "the taskbar).", parent=self)
+
+        threading.Thread(target=work, daemon=True).start()
+        self.after(300, done)
 
     # ------------------------------------------------------------------ UI
     def _build_menu(self):

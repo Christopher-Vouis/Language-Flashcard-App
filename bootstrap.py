@@ -126,6 +126,10 @@ class SetupWindow:
         self.ok = False
         self.root = root = tk.Tk()
         root.title("Language Flashcards – first-time setup")
+        try:
+            root.iconbitmap(default=os.path.join(APP_DIR, "assets", "app.ico"))
+        except tk.TclError:
+            pass
         root.configure(background="#1e1f22")
         root.geometry("680x420")
         root.minsize(480, 300)

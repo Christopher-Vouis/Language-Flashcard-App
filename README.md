@@ -17,10 +17,14 @@ Studio: if the packages aren't there, it sets up `.venv` and restarts itself wit
 
 ## Use
 
-Double-click **`run.bat`** (or run `app.py`). The app opens at the **main menu**:
+Open **Language Flashcards** from the shortcut on your desktop or in the Start menu (you can pin it
+to the taskbar). The app makes those shortcuts, with its icon, the first time it runs; **Settings →
+Create desktop and Start menu shortcuts** makes them again. Before that, double-click **`run.bat`**
+(or run `app.py`). The app opens at the **main menu**:
 
 - **⚙ gear** (top right) — a small **Settings** window: the **window size when the app opens**
-  (type a width and height, or **Use the current size**; it applies the next time the app opens).
+  (type a width and height, or **Use the current size**; it applies the next time the app opens), and
+  **Create desktop and Start menu shortcuts**.
 - **Welcome, <profile>** (top left) — **change** opens the Profiles screen; **sign out** returns to it and
   locks the rest of the app until a profile signs in.
 - **Deck** — the name of the deck being studied, with its New / Due / Total.
@@ -219,6 +223,7 @@ Command line alternative:
 
 - `transcriber.py` — engine; returns a `Transcript` (segments → words, with times). Later stages (audio clips, screenshots, flashcards) build on this and on `output\*.json`.
 - `settings.py` — settings remembered between runs (`settings.json`): the window size and the screenshot size.
+- `shortcuts.py` — the desktop / Start menu shortcuts (icon: `assets\app.ico`).
 - `bootstrap.py` — the first-run setup (creates `.venv`, installs `requirements.txt`, restarts the app in it).
 - `media.py` — cuts audio clips (44.1 kHz WAV, with 0.2 s / 0.3 s padding) and screenshots.
 - `saved.py` — the saved-lines library.
