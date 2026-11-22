@@ -43,10 +43,16 @@ Create desktop and Start menu shortcuts** makes them again. Before that, double-
   due date is today or earlier, *Total* = all its cards.
 - **Study** — review the cards in the chosen deck (see *Study mode* below).
 - **Create** — transcribe a video or song, save lines and make cards (everything below).
-  The buttons work with the mouse or the keyboard (Tab to one, then Enter or Space).
+- **Stats** — your study statistics (this profile) for the chosen deck: cards studied **today** (and how
+  many answers that took), **days studied**, the current and best **streak**, the **average** per study
+  day, a chart of **cards studied per day** for the last 30 days, and a calendar of the **days studied**
+  over the last 26 weeks (brighter = more cards). Hover a bar or a day for its numbers.
+  - A card counts once a day however many times you answer it. Every answer in Study is kept in
+    `cards\study_log.jsonl`; for study done before Stats existed, only the day each card was last
+    studied is known, so that's what the history starts from.
 
 The app has no menu bar: everything is on its screens, and Study and Create have a **← Main menu**
-button. Keyboard shortcuts: Ctrl+1 main menu · Ctrl+2 Study · Ctrl+3 Create · Ctrl+4 Profiles ·
+button. Keyboard shortcuts: Ctrl+1 main menu · Ctrl+2 Study · Ctrl+3 Create · Ctrl+4 Profiles · Ctrl+5 Stats ·
 Ctrl+L Create Cards · Ctrl+K all cards · Ctrl+O open a file.
 
 ### Profiles
@@ -230,6 +236,7 @@ Command line alternative:
 - `transcriber.py` — engine; returns a `Transcript` (segments → words, with times). Later stages (audio clips, screenshots, flashcards) build on this and on `output\*.json`.
 - `settings.py` — settings remembered between runs (`settings.json`): the window size and the screenshot size.
 - `shortcuts.py` — the desktop / Start menu shortcuts (icon: `assets\app.ico`).
+- `stats.py` / `stats_screen.py` — study statistics and the Stats screen.
 - `bootstrap.py` — the first-run setup (creates `.venv`, installs `requirements.txt`, restarts the app in it).
 - `media.py` — cuts audio clips (44.1 kHz WAV, with 0.2 s / 0.3 s padding) and screenshots.
 - `saved.py` — the saved-lines library.

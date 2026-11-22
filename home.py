@@ -77,7 +77,7 @@ HEADER_Y, DECK_Y, BUTTONS_Y = 160, 600, 1150
 
 
 class HomeScreen(ttk.Frame):
-    """Main menu. `app` provides: show_study, show_create, show_profiles, sign_out, show_settings,
+    """Main menu. `app` provides: show_study, show_create, show_stats, show_profiles, sign_out, show_settings,
     show_deck, choose_deck, new_deck, rename_deck, delete_deck and `cards`."""
 
     def __init__(self, parent, app):
@@ -88,7 +88,7 @@ class HomeScreen(ttk.Frame):
         self._btn_imgs: dict[str, object] = {}
         self._size = (0, 0)
         self._job = None
-        self._btn_state = {"study": "normal", "create": "normal"}
+        self._btn_state = {"study": "normal", "create": "normal", "stats": "normal"}
         self._down: str | None = None
 
         self.canvas = c = tk.Canvas(self, highlightthickness=0, bd=0, background=theme.BG)
@@ -118,7 +118,8 @@ class HomeScreen(ttk.Frame):
         self._link("edit_deck", "Edit Deck", app.show_deck)
 
         # ---- buttons
-        for key, text, command in (("study", "Study", app.show_study), ("create", "Create", app.show_create)):
+        for key, text, command in (("study", "Study", app.show_study), ("create", "Create", app.show_create),
+                                   ("stats", "Stats", app.show_stats)):
             c.create_image(0, 0, tags=(f"btn_{key}", f"hit_{key}"))
             c.create_rectangle(0, 0, 0, 0, fill=BTN_FACE, outline=BTN_EDGE, width=2,
                                state="hidden", tags=(f"box_{key}", f"hit_{key}"))  # without Pillow
@@ -292,20 +293,23 @@ class HomeScreen(ttk.Frame):
             c.coords(tag, x, y)
             x += width + gap
 
-        # ---- Study / Create
-        bw, bh = max(round(400 * s), 8), max(round(200 * s), 8)
+        # ---- Study / Create / Stats: one centred row; it shrinks if the window is too narrow
+        row = 3 * 400 + 2 * 26                    # design px
+        bs = min(s, (w - 32) / row)               # the buttons' size
+        bw, bh = max(round(400 * bs), 8), max(round(200 * bs), 8)
         if self.btn_src is not None:
             base = self.btn_src.resize((bw, bh), Image.LANCZOS)
             self._btn_imgs = {"normal": ImageTk.PhotoImage(base),
                               "hover": ImageTk.PhotoImage(ImageEnhance.Brightness(base).enhance(1.22)),
                               "pressed": ImageTk.PhotoImage(ImageEnhance.Brightness(base).enhance(0.8))}
-        for key, centre in (("study", 400), ("create", 826)):
-            x, y = at(centre, 1150, BUTTONS_Y)
+        for i, key in enumerate(("study", "create", "stats")):
+            _x, y = at(600, 1150, BUTTONS_Y)
+            x = w / 2 + (i - 1) * (400 + 26) * bs
             c.coords(f"btn_{key}", x, y)
             if self.btn_src is None:
                 c.itemconfigure(f"box_{key}", state="normal")
                 c.coords(f"box_{key}", x - bw / 2, y - bh / 2, x + bw / 2, y + bh / 2)
-            self._place_outlined(f"txt_{key}", x, y - 10 * s, (HEAD_FONT, px(66), "bold"), 2 * s)
+            self._place_outlined(f"txt_{key}", x, y - 10 * bs, (HEAD_FONT, -max(round(66 * bs), 8), "bold"), 2 * bs)
             self._show_button(key)
 
     # ------------------------------------------------------------ data

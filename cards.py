@@ -41,6 +41,7 @@ class CardStore:
         self.root = root
         self.media_dir = os.path.join(root, "media")
         self.path = os.path.join(root, "cards.json")
+        self.log_path = os.path.join(root, "study_log.jsonl")   # one line per answer (Stats)
         self.cards: list[dict] = []
         self.decks: list[dict] = []      # [{"id", "name"}], in display order
         self.selected_deck: str = ALL    # deck chosen on the main menu
@@ -145,9 +146,56 @@ class CardStore:
         card = self.get(card_id)
         if card is None:
             return None
+        self._seed_log()
         sched = srs.answer(card, grade)
         self._write()
+        self._log({"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "card": card_id, "grade": grade,
+                   "decks": list(card.get("decks", []))})
         return sched
+
+    # ------------------------------------------------------------ study log (Stats)
+    def _log(self, entry: dict) -> None:
+        os.makedirs(self.root, exist_ok=True)
+        try:
+            with open(self.log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            pass   # stats are nice to have; never stop studying over them
+
+    def _seed_log(self) -> None:
+        """Before the log existed only each card's last study date was kept: the
+        first time, those go in the log (one entry per card, on that day)."""
+        if os.path.exists(self.log_path):
+            return
+        entries = [{"t": c["last_reviewed"].replace(" ", "T"), "card": c["id"], "grade": "",
+                    "decks": list(c.get("decks", [])), "from": "last_reviewed"}
+                   for c in self.cards if c.get("last_reviewed")]
+        entries.sort(key=lambda e: e["t"])
+        os.makedirs(self.root, exist_ok=True)
+        try:
+            with open(self.log_path, "w", encoding="utf-8") as f:
+                for e in entries:
+                    f.write(json.dumps(e, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    def study_log(self, deck_id: str = ALL) -> list[dict]:
+        """Every answer given in Study (oldest first), for one deck or all.
+        A deck's log is the answers to cards that were in it when studied."""
+        self._seed_log()
+        out = []
+        try:
+            with open(self.log_path, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue          # a half-written line (e.g. power cut): skip it
+                    if deck_id == ALL or deck_id in e.get("decks", []):
+                        out.append(e)
+        except OSError:
+            pass
+        return out
 
     def due_cards(self, deck_id: str = ALL) -> list[dict]:
         """Cards in the deck whose due date is today or earlier."""

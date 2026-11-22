@@ -25,6 +25,7 @@ import backdrop
 import media
 import shortcuts
 from settings import Settings
+from stats_screen import StatsScreen
 import srs
 import templates
 from audio import play_wav, stop_wav
@@ -1574,6 +1575,7 @@ class App(tk.Tk):
         self._build_home()
         self._build_profiles()
         self.study_screen = StudyScreen(self, self)
+        self.stats_screen = StatsScreen(self, self)
         for key in ("<space>", "<Return>", "<KeyPress-r>", "<KeyPress-R>", "<Escape>",
                     "<KeyPress-1>", "<KeyPress-2>", "<KeyPress-3>", "<KP_1>", "<KP_2>", "<KP_3>", "<KP_Enter>"):
             self.bind(key, self._study_key)
@@ -1620,6 +1622,7 @@ class App(tk.Tk):
         self.bind_all("<Control-Key-2>", lambda e: self.show_study())
         self.bind_all("<Control-Key-3>", lambda e: self.show_create())
         self.bind_all("<Control-Key-4>", lambda e: self.show_profiles())
+        self.bind_all("<Control-Key-5>", lambda e: self.show_stats())
 
         self.bind_all("<Control-o>", lambda e: (self.show_create(), self.browse()))
         self.bind_all("<Control-l>", lambda e: self.show_saved())
@@ -2685,7 +2688,7 @@ class App(tk.Tk):
 
     def _show_screen(self, name: str):
         screens = {"home": self.home_screen, "create": self.create_screen, "study": self.study_screen,
-                   "profiles": self.profiles_screen}
+                   "stats": self.stats_screen, "profiles": self.profiles_screen}
         if self.signed_out and name != "profiles":
             name = "profiles"        # signed out: nothing else until someone signs in
         if name == self.current_screen:
@@ -2703,7 +2706,7 @@ class App(tk.Tk):
     def _set_title(self):
         tab = dict(CREATE_TABS).get(getattr(self, "create_tab", ""), "")
         where = {"home": "", "create": f" – {tab}" if tab else " – Create", "study": " – Study",
-                 "profiles": " – Profiles"}.get(self.current_screen, "")
+                 "stats": " – Stats", "profiles": " – Profiles"}.get(self.current_screen, "")
         who = "not signed in" if self.signed_out else self.profile["name"]
         self.title(f"Language Flashcards{where}  ·  {who}")
 
@@ -2966,6 +2969,12 @@ class App(tk.Tk):
 
     def show_create(self):
         self._show_screen("create")
+
+    def show_stats(self):
+        """Main menu → Stats: this profile's study statistics for the chosen deck."""
+        stop_wav()
+        self.stats_screen.refresh()
+        self._show_screen("stats")
 
     def show_study(self):
         stop_wav()
