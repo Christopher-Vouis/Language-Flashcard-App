@@ -39,8 +39,13 @@ Create desktop and Start menu shortcuts** makes them again. Before that, double-
     All cards and any other decks.
   - **Reset progress...** makes every card in the deck New and due today again (asks first; this
     can't be undone, and a card in several decks is reset in all of them).
-- **New / Due / Total** for the chosen deck: *New* = cards never studied, *Due* = studied cards whose
-  due date is today or earlier, *Total* = all its cards.
+- **Study settings** — daily limits for the chosen deck (each deck, and All cards, has its own):
+  **New cards per day** (20 to start) and **Maximum reviews per day** (200 to start). Once today's
+  limit is reached, Study says you're done and the rest wait for tomorrow; cards you're in the middle
+  of learning always come back.
+- **New / Due / Total** for the chosen deck: what Study will show today, within the daily limits —
+  *New* = new cards it will introduce, *Due* = cards being learned plus reviews (learned cards whose
+  due date is today or earlier); *Total* = all its cards.
 - **Study** — review the cards in the chosen deck (see *Study mode* below).
 - **Create** — transcribe a video or song, save lines and make cards (everything below).
 - **Stats** — your study statistics (this profile) for the chosen deck: cards studied **today** (and how

@@ -1222,14 +1222,10 @@ class StudyScreen(ttk.Frame):
 
     # --- the session queue
     def _due_ids(self) -> list[str]:
-        """Due cards of the deck, in study order: cards already in progress
-        (learning / relearning) first, then reviews (longest overdue first),
-        then new cards in the order they were made."""
-        order = {"learning": 0, "relearning": 0, "review": 1, "new": 2}
-        cards = self.app.cards.due_cards(self.deck_id)
-        cards.sort(key=lambda c: (order[srs.schedule(c)["state"]],
-                                  srs.due_date(c) if srs.schedule(c)["state"] == "review" else 0))
-        return [c["id"] for c in cards]
+        """The deck's cards to study now, in order, within today's limits (Study
+        settings): cards being learned, then reviews, then new cards (cards.study_queue)."""
+        queue, self.held = self.app.cards.study_queue(self.deck_id)
+        return [c["id"] for c in queue]
 
     def sync(self):
         """Called when cards are added/edited/deleted elsewhere, or the deck
@@ -1361,7 +1357,14 @@ class StudyScreen(ttk.Frame):
         if c is None:
             cards = self.app.cards
             nxt = cards.next_due(self.deck_id)
-            if nxt is not None:
+            held = getattr(self, "held", {}) or {}
+            if held.get("new") or held.get("reviews"):
+                waiting = " and ".join(f"{n} {what}{'s' if n != 1 else ''}" for n, what in
+                                       ((held.get("reviews", 0), "review"), (held.get("new", 0), "new card")) if n)
+                msg = (f"Done for today!\n\nYou've reached today's limit for this deck: {waiting} "
+                       f"{'is' if held.get('reviews', 0) + held.get('new', 0) == 1 else 'are'} waiting for "
+                       f"tomorrow.\nYou can change the limits in Study settings on the main menu.")
+            elif nxt is not None:
                 days = (nxt - srs.today()).days
                 msg = (f"All caught up!\n\nNo more cards are due in this deck today."
                        f"\nThe next one is due {srs.describe_days(days)}  ({nxt:%a %d %b %Y}).")
@@ -1507,6 +1510,66 @@ class SettingsDialog(tk.Toplevel):
         self.app.settings.set("window_width", w)
         self.app.settings.set("window_height", h)
         self.destroy()
+
+
+class StudySettingsDialog(tk.Toplevel):
+    """Main menu → Study settings: daily limits for the chosen deck (each deck,
+    and All cards, has its own)."""
+
+    def __init__(self, app: "App", deck_id: str):
+        super().__init__(app)
+        self.app, self.deck_id = app, deck_id
+        cards = app.cards
+        name = cards.deck_name(deck_id)
+        self.title(f"Study settings – {name}")
+        theme.dark_title_bar(self)
+        self.transient(app)
+        self.resizable(False, False)
+        limits, done = cards.study_limits(deck_id), cards.done_today(deck_id)
+        body = ttk.Frame(self, padding=(20, 16, 20, 16))
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=f"Deck:  {name}", font=("Segoe UI", 10, "bold")).grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 12))
+        self.new_var = tk.StringVar(value=str(limits["new_per_day"]))
+        self.rev_var = tk.StringVar(value=str(limits["max_reviews"]))
+        rows = (("New cards per day:", self.new_var, f"introduced today: {done['new']}"),
+                ("Maximum reviews per day:", self.rev_var, f"reviewed today: {done['reviews']}"))
+        self.spins = []
+        for r, (label, var, note) in enumerate(rows, start=1):
+            ttk.Label(body, text=label).grid(row=r, column=0, sticky="w", pady=4)
+            sp = ttk.Spinbox(body, from_=0, to=99999, increment=1, textvariable=var, width=8)
+            sp.grid(row=r, column=1, sticky="w", padx=(10, 0), pady=4)
+            ttk.Label(body, text=note, foreground=theme.SUBTLE).grid(row=r, column=2, sticky="w", padx=(12, 0))
+            self.spins.append(sp)
+        ttk.Label(body, wraplength=400, justify="left", foreground=theme.SUBTLE, text=(
+            "Once today's limit is reached, the rest wait for tomorrow. Cards you're in the middle of "
+            "learning always come back. Reviews are learned cards that are due.")).grid(
+            row=3, column=0, columnspan=3, sticky="w", pady=(12, 0))
+        buttons = ttk.Frame(body)
+        buttons.grid(row=4, column=0, columnspan=3, sticky="e", pady=(16, 0))
+        ttk.Button(buttons, text="Save", command=self.save).pack(side="left")
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="left", padx=(6, 0))
+        self.bind("<Return>", lambda e: self.save())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.update_idletasks()
+        x = app.winfo_rootx() + (app.winfo_width() - self.winfo_reqwidth()) // 2
+        y = app.winfo_rooty() + (app.winfo_height() - self.winfo_reqheight()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        self.spins[0].focus_set()
+        self.spins[0].select_range(0, "end")
+
+    def save(self):
+        try:
+            new, rev = int(self.new_var.get().strip()), int(self.rev_var.get().strip())
+        except ValueError:
+            new = rev = -1
+        if not (0 <= new <= 99999 and 0 <= rev <= 99999):
+            messagebox.showwarning("Study settings", "Type whole numbers (0 or more) for both limits.",
+                                   parent=self)
+            return
+        self.app.cards.set_study_limits(self.deck_id, new, rev)
+        self.destroy()
+        self.app.on_cards_changed()      # main menu counts and the Study queue follow
 
 
 # ------------------------------------------------------------ main window
@@ -2653,6 +2716,14 @@ class App(tk.Tk):
             w, h = 1280, 1000
         return max(w, MIN_WINDOW[0]), max(h, MIN_WINDOW[1])
 
+    def show_study_settings(self):
+        """Main menu → Study settings (for the chosen deck)."""
+        win = getattr(self, "study_settings_window", None)
+        if win and win.winfo_exists():
+            win.destroy()                 # (it may be for another deck)
+        deck_id = self.cards.selected_deck if self.cards.deck(self.cards.selected_deck) else ALL
+        self.study_settings_window = StudySettingsDialog(self, deck_id)
+
     def show_settings(self):
         """The gear on the main menu: a small Settings window."""
         win = getattr(self, "settings_window", None)
@@ -2907,7 +2978,7 @@ class App(tk.Tk):
         """Refresh the main menu: welcome line, deck name, New / Due / Total."""
         cards = self.cards
         current = cards.selected_deck if cards.deck(cards.selected_deck) else ALL
-        n = cards.counts(current)
+        n = cards.study_counts(current)          # what Study will show today (within the daily limits)
         self.home.update_view(self.profile["name"], cards.deck_name(current), n["new"], n["due"], n["total"])
 
     def choose_deck(self, deck_id: str):

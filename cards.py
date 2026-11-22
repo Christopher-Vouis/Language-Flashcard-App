@@ -34,6 +34,7 @@ def card_images(card: dict) -> list[dict]:
         return [{"id": "shot", "path": card["screenshot"], "name": "Screenshot"}]
     return []
 ALL = ""  # "deck id" meaning every card, whatever its decks
+DEFAULT_LIMITS = {"new_per_day": 20, "max_reviews": 200}   # Study settings, per deck
 
 
 class CardStore:
@@ -57,6 +58,7 @@ class CardStore:
         self.cards = data.get("cards", [])
         self.decks = data.get("decks", [])
         self.selected_deck = data.get("selected_deck", ALL)
+        self.all_limits = data.get("all_limits", {})   # Study settings for "All cards"
         # Older files had no decks: put every existing card in a "Default" deck.
         changed = False
         if not self.decks:
@@ -79,7 +81,7 @@ class CardStore:
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"version": 2, "decks": self.decks, "selected_deck": self.selected_deck,
-                       "cards": self.cards}, f, ensure_ascii=False, indent=2)
+                       "all_limits": self.all_limits, "cards": self.cards}, f, ensure_ascii=False, indent=2)
         os.replace(tmp, self.path)  # atomic: never leaves a half-written file
 
     # ------------------------------------------------------------ decks
@@ -147,11 +149,64 @@ class CardStore:
         if card is None:
             return None
         self._seed_log()
+        before = srs.schedule(card)["state"]           # new / learning / review / relearning
         sched = srs.answer(card, grade)
         self._write()
         self._log({"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "card": card_id, "grade": grade,
-                   "decks": list(card.get("decks", []))})
+                   "state": before, "decks": list(card.get("decks", []))})
         return sched
+
+    # ------------------------------------------------------------ daily limits (Study settings)
+    def study_limits(self, deck_id: str = ALL) -> dict:
+        d = self.deck(deck_id)
+        stored = (d.get("limits") if d else self.all_limits) or {}
+        return {k: int(stored.get(k, v)) for k, v in DEFAULT_LIMITS.items()}
+
+    def set_study_limits(self, deck_id: str, new_per_day: int, max_reviews: int) -> None:
+        limits = {"new_per_day": int(new_per_day), "max_reviews": int(max_reviews)}
+        d = self.deck(deck_id)
+        if d:
+            d["limits"] = limits
+        else:
+            self.all_limits = limits
+        self._write()
+
+    def done_today(self, deck_id: str = ALL) -> dict:
+        """Studied today in this deck: new cards introduced, and review cards
+        (learned cards that were due) answered. Each card counts once."""
+        today = srs.today().isoformat()
+        new, reviews = set(), set()
+        for e in self.study_log(deck_id):
+            if e.get("t", "")[:10] != today:
+                continue
+            if e.get("state") == "new":
+                new.add(e.get("card"))
+            elif e.get("state") == "review":
+                reviews.add(e.get("card"))
+        return {"new": len(new), "reviews": len(reviews)}
+
+    def study_queue(self, deck_id: str = ALL) -> tuple[list[dict], dict]:
+        """The cards to study now, in order, within today's limits: cards being
+        learned (always), then reviews (most overdue first), then new cards (in
+        the order they were made). Also returns how many due cards the limits
+        are holding back today: {"new": n, "reviews": n}."""
+        limits, done = self.study_limits(deck_id), self.done_today(deck_id)
+        due = self.due_cards(deck_id)
+        state = lambda c: srs.schedule(c)["state"]          # noqa: E731
+        learning = [c for c in due if state(c) in ("learning", "relearning")]
+        reviews = sorted((c for c in due if state(c) == "review"), key=srs.due_date)
+        new = [c for c in due if state(c) == "new"]
+        r_left = max(limits["max_reviews"] - done["reviews"], 0)
+        n_left = max(limits["new_per_day"] - done["new"], 0)
+        held = {"new": max(len(new) - n_left, 0), "reviews": max(len(reviews) - r_left, 0)}
+        return learning + reviews[:r_left] + new[:n_left], held
+
+    def study_counts(self, deck_id: str = ALL) -> dict:
+        """For the main menu: what Study will show today, within the limits.
+        New = new cards it will introduce; Due = cards being learned + reviews."""
+        queue, _held = self.study_queue(deck_id)
+        new = sum(1 for c in queue if srs.is_new(c))
+        return {"new": new, "due": len(queue) - new, "total": len(self.cards_in(deck_id))}
 
     # ------------------------------------------------------------ study log (Stats)
     def _log(self, entry: dict) -> None:

@@ -77,7 +77,7 @@ HEADER_Y, DECK_Y, BUTTONS_Y = 160, 600, 1150
 
 
 class HomeScreen(ttk.Frame):
-    """Main menu. `app` provides: show_study, show_create, show_stats, show_profiles, sign_out, show_settings,
+    """Main menu. `app` provides: show_study, show_create, show_stats, show_profiles, sign_out, show_settings, show_study_settings,
     show_deck, choose_deck, new_deck, rename_deck, delete_deck and `cards`."""
 
     def __init__(self, parent, app):
@@ -116,6 +116,8 @@ class HomeScreen(ttk.Frame):
         self._link("change_deck", "Change Deck", self.change_deck)
         c.create_text(0, 0, text="|", fill="#ffffff", tags="bar2")
         self._link("edit_deck", "Edit Deck", app.show_deck)
+        c.create_text(0, 0, text="|", fill="#ffffff", tags="bar3")
+        self._link("study_settings", "Study settings", app.show_study_settings)
 
         # ---- buttons
         for key, text, command in (("study", "Study", app.show_study), ("create", "Create", app.show_create),
@@ -282,14 +284,15 @@ class HomeScreen(ttk.Frame):
                 c.itemconfigure(tag, font=(BODY_FONT, px(67)))
                 c.coords(tag, *at(x, y, DECK_Y))
         link = px(30)
-        self._link_px.update(change_deck=-link, edit_deck=-link)
-        for tag in ("change_deck", "bar2", "edit_deck"):
+        self._link_px.update(change_deck=-link, edit_deck=-link, study_settings=-link)
+        links = ("change_deck", "bar2", "edit_deck", "bar3", "study_settings")
+        for tag in links:
             c.itemconfigure(tag, font=(BODY_FONT, link), anchor="w")
         gap = 8 * s
-        widths = [c.bbox(t)[2] - c.bbox(t)[0] for t in ("change_deck", "bar2", "edit_deck")]
+        widths = [c.bbox(t)[2] - c.bbox(t)[0] for t in links]
         x, y = at(601, 826, DECK_Y)
-        x -= (sum(widths) + 2 * gap) / 2
-        for tag, width in zip(("change_deck", "bar2", "edit_deck"), widths):
+        x -= (sum(widths) + (len(links) - 1) * gap) / 2
+        for tag, width in zip(links, widths):
             c.coords(tag, x, y)
             x += width + gap
 
