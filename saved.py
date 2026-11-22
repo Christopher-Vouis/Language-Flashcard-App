@@ -17,7 +17,7 @@ import uuid
 
 from collections import Counter
 
-from media import safe_name, shared_copy
+from media import is_shared, safe_name, shared_copy
 
 
 class SavedStore:
@@ -106,6 +106,29 @@ class SavedStore:
         e.setdefault("original_text", e["text"])
         e["text"] = text
         e["edited_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        self._write()
+        return True
+
+    def set_times(self, entry_id: str, start: float, end: float, audio_src: str = "", shot_src: str = "") -> bool:
+        """New start/end for a saved line (its line was re-clipped on the Create
+        screen), with copies of the re-cut audio clip and screenshot."""
+        e = self.get(entry_id)
+        if e is None:
+            return False
+        e["start"], e["end"] = start, end
+        e["edited_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        os.makedirs(self.media_dir, exist_ok=True)
+        for key, src, ext in (("audio_clip", audio_src, ".wav"), ("screenshot", shot_src, ".jpg")):
+            if not src or not os.path.isfile(src):
+                continue
+            if key == "screenshot" and is_shared(src):
+                continue                       # one picture for every line: unchanged
+            dst = self.abs_path(e.get(key, ""))
+            if not dst or is_shared(dst):
+                name = f"{safe_name(os.path.splitext(os.path.basename(e['source_file']))[0])}_{e['id']}{ext}"
+                dst = os.path.join(self.media_dir, name)
+                e[key] = f"media/{name}"
+            shutil.copy2(src, dst)
         self._write()
         return True
 

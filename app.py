@@ -205,7 +205,11 @@ class PreviewPanel(ttk.Frame):
 
         self.meta_var = tk.StringVar()
         self.text_var = tk.StringVar()
-        self.meta_label = ttk.Label(self, textvariable=self.meta_var, foreground=theme.MUTED)
+        self.meta_row = ttk.Frame(self)           # "Line 3   00:00:01.200 – ..." + (Create) Edit times
+        self.meta_label = ttk.Label(self.meta_row, textvariable=self.meta_var, foreground=theme.MUTED)
+        self.meta_label.pack(side="left")
+        self.meta_tools = ttk.Frame(self.meta_row)
+        self.meta_tools.pack(side="left", padx=(10, 0))
         self.text_label = ttk.Label(self, textvariable=self.text_var, font=("Segoe UI", 14),
                                     wraplength=420, justify="left")
         self.bind("<Configure>", self._rewrap)
@@ -224,7 +228,7 @@ class PreviewPanel(ttk.Frame):
         controls.pack(side="bottom", fill="x", pady=(0, 4))
         self.controls = controls
         self.text_label.pack(side="bottom", anchor="w", fill="x", pady=(2, 8))
-        self.meta_label.pack(side="bottom", anchor="w", pady=(8, 0))
+        self.meta_row.pack(side="bottom", anchor="w", fill="x", pady=(8, 0))
         holder.pack(side="top", fill="both", expand=True)
 
     def _rewrap(self, e):
@@ -242,15 +246,15 @@ class PreviewPanel(ttk.Frame):
             self.word_var.set(card.get("target_word", ""))
             self.reading_var.set(card.get("reading", ""))
             self.def_var.set(card.get("definition", ""))
-            self.details.pack(side="bottom", anchor="w", fill="x", pady=(8, 0), after=self.meta_label)
+            self.details.pack(side="bottom", anchor="w", fill="x", pady=(8, 0), after=self.meta_row)
         else:
             self.details.pack_forget()
 
         if shot and os.path.isfile(shot) and Image is not None:
             try:
-                if not self._image or self._image[0] != shot:
+                if not self._image or self._image[0] != shot or self._image[2] != os.path.getmtime(shot):
                     with Image.open(shot) as im:
-                        self._image = (shot, im.copy())
+                        self._image = (shot, im.copy(), os.path.getmtime(shot))   # (re-read if re-cut)
                 self._render()
                 return
             except OSError:
@@ -1781,6 +1785,7 @@ class App(tk.Tk):
         self.preview = PreviewPanel(main, self.autoplay_var)
         main.add(self.preview, weight=2)
         self._build_shot_size(self.preview)
+        self._build_time_editor(self.preview.meta_tools)
 
         # --- bottom buttons
         bottom = ttk.Frame(body, padding=(10, 4, 10, 6))
@@ -1794,6 +1799,193 @@ class App(tk.Tk):
                    command=lambda: open_folder(OUTPUT_DIR)).pack(side="left")
         self.info_var = tk.StringVar()
         ttk.Label(bottom, textvariable=self.info_var, foreground=theme.MUTED).pack(side="right")
+
+    # --------------------------------------------------------- editing a line's times
+    def _build_time_editor(self, bar):
+        """Beside the line's times under the screenshot: Edit -> two time boxes,
+        Clip (re-cut this line's audio clip + screenshot at the new times) and Cancel."""
+        self.time_edit_index: int | None = None
+        self.clip_start_var, self.clip_end_var = tk.StringVar(), tk.StringVar()
+        self.time_edit_btn = ttk.Button(bar, text="Edit", width=6, command=self.edit_times, state="disabled")
+        self.time_edit_btn.pack(side="left")
+        self.time_fields = ttk.Frame(bar)
+        self.clip_start_entry = ttk.Entry(self.time_fields, textvariable=self.clip_start_var, width=13)
+        self.clip_start_entry.pack(side="left")
+        ttk.Label(self.time_fields, text="–").pack(side="left", padx=4)
+        ttk.Entry(self.time_fields, textvariable=self.clip_end_var, width=13).pack(side="left")
+        self.clip_btn = ttk.Button(self.time_fields, text="Clip", width=6, command=self.clip_line)
+        self.clip_btn.pack(side="left", padx=(8, 0))
+        self.clip_cancel_btn = ttk.Button(self.time_fields, text="Cancel", width=7,
+                                          command=self.cancel_time_edit)
+        self.clip_cancel_btn.pack(side="left", padx=(4, 0))
+        for w in self.time_fields.winfo_children():
+            if isinstance(w, ttk.Entry):
+                w.bind("<Return>", lambda e: (self.clip_line(), "break")[1])
+                w.bind("<Escape>", lambda e: (self.cancel_time_edit(), "break")[1])
+        self._clipping = False
+
+    def _can_edit_times(self) -> bool:
+        busy = bool(self.worker and self.worker.is_alive())
+        return (self.transcript is not None and not busy and not self._clipping
+                and self._focused_index() is not None)
+
+    def _update_time_editor(self):
+        """Edit is available for a finished transcript's selected line."""
+        if not hasattr(self, "time_edit_btn"):
+            return
+        if self.time_edit_index is not None and self.time_edit_index != self._focused_index():
+            self.cancel_time_edit()                  # another line was picked
+        self.time_edit_btn.config(state="normal" if self._can_edit_times() else "disabled")
+
+    def edit_times(self):
+        index = self._focused_index()
+        seg = self._segment(index) if index is not None else None
+        if seg is None or not self._can_edit_times():
+            return
+        self.time_edit_index = index
+        self.clip_start_var.set(tr.fmt_time(seg.start))
+        self.clip_end_var.set(tr.fmt_time(seg.end))
+        self.preview.meta_var.set(f"Line {index + 1}")
+        self.time_edit_btn.pack_forget()
+        self.time_fields.pack(side="left")
+        self.clip_start_entry.focus_set()
+        self.clip_start_entry.select_range(0, "end")
+
+    def cancel_time_edit(self):
+        if self.time_edit_index is None:
+            return
+        index, self.time_edit_index = self.time_edit_index, None
+        self.time_fields.pack_forget()
+        self.time_edit_btn.pack(side="left")
+        if self._segment(index) is not None and self._focused_index() == index:
+            self._show_preview(index)
+
+    @staticmethod
+    def _parse_time(text: str) -> float | None:
+        """'00:01:02.345', '1:02.5', '62.345' (a comma works as the decimal point too)."""
+        text = text.strip().replace(",", ".")
+        if not text:
+            return None
+        try:
+            parts = [float(p) for p in text.split(":")]
+        except ValueError:
+            return None
+        if len(parts) > 3 or any(p < 0 for p in parts) or any(p >= 60 for p in parts[1:]):
+            return None
+        value = 0.0
+        for p in parts:
+            value = value * 60 + p
+        return value
+
+    def clip_line(self):
+        """Clip: give the line the new times, and re-cut its audio clip and screenshot."""
+        index = self.time_edit_index
+        seg = self._segment(index) if index is not None else None
+        if seg is None or self._clipping:
+            return
+        start, end = self._parse_time(self.clip_start_var.get()), self._parse_time(self.clip_end_var.get())
+        duration = self.transcript.duration or 0
+        problem = None
+        if start is None or end is None:
+            problem = "Type the times like 00:01:02.345 (hours:minutes:seconds), or in seconds, e.g. 62.3."
+        elif end <= start:
+            problem = "The end has to be after the start."
+        elif duration and start >= duration:
+            problem = f"The start is after the end of the file ({tr.fmt_time(duration)})."
+        if problem:
+            messagebox.showwarning("Edit times", problem, parent=self)
+            return
+        if duration:
+            end = min(end, duration)
+        old = (seg.start, seg.end)
+        has_audio = index in self.audio_paths
+        shot = self.shot_paths.get(index, "")
+        shared = bool(shot) and media.is_shared(shot)
+        shot_size = None
+        if shot and not shared and not self.shot_match_var.get():
+            try:
+                shot_size = (int(self.shot_w_var.get()), int(self.shot_h_var.get()))
+            except ValueError:
+                shot_size = None
+        stop_wav()
+        self._clipping = True
+        self.clip_btn.config(state="disabled")
+        self.clip_cancel_btn.config(state="disabled")
+        self.go_btn.config(state="disabled")
+        self.status_var.set(f"Re-cutting line {index + 1}...")
+        result: list = []
+        src = self.transcript.source_file
+        media_dir = os.path.join(self.out_dir, "media") if self.out_dir else ""
+
+        def work():
+            try:
+                offset = 0.0
+                if has_audio and media_dir:
+                    clip = (index, max(start - media.PAD_BEFORE, 0),
+                            min(end + media.PAD_AFTER, duration) if duration else end + media.PAD_AFTER,
+                            self.audio_paths[index])
+                    offset = media.extract_audio_clips(src, [clip])
+                if shot and not shared and media_dir and media.has_video(src):
+                    media.extract_screenshots(src, [(index, (start + end) / 2, shot)], offset, size=shot_size)
+                result.append(None)
+            except Exception as e:  # noqa: BLE001 - reported below
+                result.append(e)
+
+        def done():
+            if not result:
+                self.after(150, done)
+                return
+            self._clipping = False
+            self.clip_btn.config(state="normal")
+            self.clip_cancel_btn.config(state="normal")
+            self.go_btn.config(state="normal")
+            if result[0] is not None:
+                self.status_var.set(f"Line {index + 1} couldn't be re-cut: {result[0]}")
+                messagebox.showerror("Clip", f"Line {index + 1} couldn't be re-cut:\n\n{result[0]}", parent=self)
+                return
+            self._set_line_times(seg, start, end, old)
+            self.time_edit_index = None
+            self.time_fields.pack_forget()
+            self.time_edit_btn.pack(side="left")
+            if self._focused_index() == index:
+                self._show_preview(index)
+                if self.autoplay_var.get():
+                    self.preview.play()
+            self.status_var.set(f"Line {index + 1} re-cut: {tr.fmt_time(start)} – {tr.fmt_time(end)}")
+
+        threading.Thread(target=work, daemon=True).start()
+        self.after(150, done)
+
+    def _set_line_times(self, seg: tr.Segment, start: float, end: float, old: tuple[float, float]):
+        """New times on a line: table, full transcript, transcript files, and its
+        saved copy (if it was saved) - with the re-cut audio clip and screenshot."""
+        src = self._source_file()
+        old_key = SavedStore._key(src, old[0], old[1], seg.text)
+        seg.start, seg.end = start, end
+        iid = str(seg.index)
+        if self.tree.exists(iid):
+            self.tree.set(iid, "start", tr.fmt_time(start))
+            self.tree.set(iid, "end", tr.fmt_time(end))
+        self._refresh_text()
+        self._save_transcript_files("Clip")
+        changed = 0
+        for e in list(self.store.entries):
+            if SavedStore._key(e["source_file"], e["start"], e["end"], e["text"]) == old_key:
+                changed += self.store.set_times(e["id"], start, end, self.audio_paths.get(seg.index, ""),
+                                                self.shot_paths.get(seg.index, ""))
+        if changed:
+            self.on_saved_changed()
+
+    def _save_transcript_files(self, title: str = "Edit text"):
+        """Rewrite the transcript files (.json / .srt / .txt) in the output folder."""
+        if self.transcript and self.out_dir:      # (while still transcribing, the files are written at the end)
+            base = os.path.basename(self.out_dir)
+            try:
+                for ext in (".json", ".srt", ".txt"):
+                    self.transcript.save(os.path.join(self.out_dir, base + ext))
+            except OSError as e:
+                messagebox.showwarning(title, f"The line was changed, but the transcript files "
+                                       f"couldn't be updated:\n\n{e}", parent=self)
 
     def _build_shot_size(self, panel):
         """Screenshot resolution, under the preview: the video's own (Match input
@@ -2081,6 +2273,7 @@ class App(tk.Tk):
             put(("error", e))
 
     def _poll_events(self):
+        self._update_time_editor()       # Edit (times) only for a finished transcript
         try:
             while True:
                 ev = self.events.get_nowait()
@@ -2272,14 +2465,7 @@ class App(tk.Tk):
         self._refresh_text()
         if self._focused_index() == seg.index:
             self._show_preview(seg.index)
-        if self.transcript and self.out_dir:      # (while still transcribing, the files are written at the end)
-            base = os.path.basename(self.out_dir)
-            try:
-                for ext in (".json", ".srt", ".txt"):
-                    self.transcript.save(os.path.join(self.out_dir, base + ext))
-            except OSError as e:
-                messagebox.showwarning("Edit text", f"The line was changed, but the transcript files "
-                                       f"couldn't be updated:\n\n{e}", parent=self)
+        self._save_transcript_files("Edit text")
 
     def saved_text_edited(self, entry: dict, old_text: str):
         """A saved line's text was edited: the same line of the transcript
@@ -2315,6 +2501,9 @@ class App(tk.Tk):
             audio=self.audio_paths.get(index, ""), shot=self.shot_paths.get(index, ""),
             placeholder=placeholder,
         )
+        if self.time_edit_index == index:              # still editing this line's times
+            self.preview.meta_var.set(f"Line {index + 1}")
+        self._update_time_editor()
 
     # --------------------------------------------------------- checkboxes
     def _set_checked(self, indices, value: bool):

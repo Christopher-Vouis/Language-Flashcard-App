@@ -109,6 +109,12 @@ On **Import Content**: **Browse...** → pick a file → **Transcribe**.
   lines from every file you've transcribed.
   Click a line to see its screenshot, **▶ Play** / Space / double-click to hear it, search by text,
   and **Delete selected** to remove lines.
+- **Fixing a line's times** — once the lines are made, select one: **Edit** (beside its times under
+  the screenshot) turns the times into boxes. Type new ones (`00:01:02.345`, `1:02.3` or seconds like
+  `62.3`) and press **Clip** (or Enter): that line's audio clip and screenshot are cut again at the new
+  times, and the table, full transcript and transcript files are updated. **Cancel** (or Esc) leaves it
+  as it was. The text isn't re-transcribed (fix it with Edit text). If the line was saved, its saved
+  copy gets the new times and clip too.
 - **Fixing a line's text** — select the line and press **F2** (or **✎ Edit text...**, or right-click),
   on either Create tab. Type the correction; Enter saves it.
   - On the Create screen the transcript files in `output\` are rewritten with the new text.
