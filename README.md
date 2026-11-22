@@ -4,14 +4,20 @@ Transcribes speech from an audio **or video** file in ~100 languages and shows a
 timestamped transcript. Built on [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
 (OpenAI Whisper, optimized). Runs fully offline after the model is downloaded.
 
-## Setup (once)
+## Setup
 
-1. Install **64-bit Python 3.10–3.14** from python.org (3.13 recommended; 3.15, 32-bit and ARM64 builds are not supported by the speech engine yet). Other Python versions can stay installed — setup picks a compatible one.
-2. Double-click **`setup.bat`**. It creates a private `.venv` folder and installs packages.
+Install **64-bit Python 3.10–3.14** from python.org (3.13 recommended; 3.15, 32-bit and ARM64
+builds are not supported by the speech engine yet). Other Python versions can stay installed.
+
+That's all: there's no setup step. Start the app (below) and the first time it sets itself up —
+a small window shows it finding a suitable Python, creating a private `.venv` folder and installing
+the packages (a few hundred MB, several minutes), then the app opens. If that's interrupted, starting
+the app again carries on. It works the same when `app.py` is started from an editor such as Visual
+Studio: if the packages aren't there, it sets up `.venv` and restarts itself with it.
 
 ## Use
 
-Double-click **`run.bat`**. The app opens at the **main menu**:
+Double-click **`run.bat`** (or run `app.py`). The app opens at the **main menu**:
 
 - **⚙ gear** (top right) — a small **Settings** window: the **window size when the app opens**
   (type a width and height, or **Use the current size**; it applies the next time the app opens).
@@ -213,6 +219,7 @@ Command line alternative:
 
 - `transcriber.py` — engine; returns a `Transcript` (segments → words, with times). Later stages (audio clips, screenshots, flashcards) build on this and on `output\*.json`.
 - `settings.py` — settings remembered between runs (`settings.json`): the window size and the screenshot size.
+- `bootstrap.py` — the first-run setup (creates `.venv`, installs `requirements.txt`, restarts the app in it).
 - `media.py` — cuts audio clips (44.1 kHz WAV, with 0.2 s / 0.3 s padding) and screenshots.
 - `saved.py` — the saved-lines library.
 - `cards.py` — the flashcard deck.

@@ -16,6 +16,11 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+import bootstrap
+
+if __name__ == "__main__":
+    bootstrap.ensure_ready()   # first run: installs what the app needs (no setup.bat)
+
 import backdrop
 import media
 from settings import Settings
