@@ -36,7 +36,7 @@ SCROLL = "#4a4d55"
 FONT = ("Segoe UI", 10)
 
 # ---- colour themes: the whole design turned to another hue (measured from the design
-# mock-ups). The big A / あ and anything white stay as they are.
+# mock-ups). Anything white stays white.
 THEMES = {"Blue": 0, "Orange": -168, "Red": 161, "Green": -92, "Purple": 80}   # degrees, for the pictures
 # the app's own colours (buttons, selections, progress...) use hues a little closer to
 # each theme's name: blue 220° -> orange 32°, red 8°, green 135°, purple 280°
@@ -170,6 +170,15 @@ def apply(root: tk.Tk) -> ttk.Style:
               indicatorbackground=[("selected", ACCENT), ("active", RAISED)],
               indicatorcolor=[("selected", ACCENT)],
               indicatorforeground=[("selected", "#ffffff")])
+
+    # radio buttons (Settings → Theme): no highlight when the mouse is over them
+    style.configure("TRadiobutton", background=BG, foreground=FG,
+                    indicatorbackground=SURFACE, indicatorforeground=FG, indicatorcolor=SURFACE)
+    style.map("TRadiobutton",
+              background=[("active", BG)],
+              foreground=[("disabled", DISABLED), ("active", FG)],
+              indicatorbackground=[("selected", ACCENT), ("active", SURFACE)],
+              indicatorcolor=[("selected", ACCENT), ("active", SURFACE)])
 
     # text inputs and drop-downs
     for w in ("TEntry", "TCombobox", "TSpinbox"):

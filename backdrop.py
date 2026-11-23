@@ -63,19 +63,6 @@ def load_themed(name: str):
     return theme.shift_image(img) if img is not None else None
 
 
-def _keep_letters(original, themed):
-    """The A / あ keep their own colour in every theme: only the page around
-    them takes the theme's tint."""
-    if not theme.HUE:
-        return original
-    from PIL import ImageChops, ImageFilter
-    grey = original.convert("L")
-    page = Image.new("L", grey.size, round(sum(BASE) / 3))
-    # the letters are the parts lighter than the page; soften the edge
-    mask = ImageChops.subtract(grey, page).point(lambda v: min(v * 40, 255)).filter(ImageFilter.GaussianBlur(1.5))
-    return Image.composite(original, themed, mask)
-
-
 def _layers():
     """Cut the background picture into its parts (once), in the current theme."""
     global _parts
@@ -92,7 +79,7 @@ def _layers():
         # the white line and its shadow are the same all the way across: one column is enough
         dots = load_themed("menu_dots.png") or themed.crop((0, 0, DESIGN_W, LINE_Y))
         line = themed.crop((0, LINE_Y, 1, HEADER_H))
-        glyphs = _keep_letters(src.crop(GLYPH_BOX), themed.crop(GLYPH_BOX))
+        glyphs = themed.crop(GLYPH_BOX)          # the A / あ take the theme's hue too
         _parts = (dots, line, glyphs, stripes)
     return _parts
 
