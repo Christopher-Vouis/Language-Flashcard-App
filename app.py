@@ -1193,14 +1193,7 @@ class StudyScreen(ttk.Frame):
         c.create_window(0, 0, anchor="nw", tags="card", window=self.view)
 
         # ---- buttons: Flip (front), then Again / Hard / Correct (back)
-        style = ttk.Style(self)
-        for name, bg, hover in (("Again", "#7a3434", "#8c3f3f"), ("Hard", theme.RAISED, theme.RAISED_HOVER),
-                                ("Correct", theme.ACCENT, theme.ACCENT_HOVER)):
-            style.configure(f"{name}.TButton", background=bg, lightcolor=bg, darkcolor=bg,
-                            foreground="#ffffff", font=("Segoe UI", 12, "bold"), padding=(10, 8))
-            style.map(f"{name}.TButton", background=[("active", hover)],
-                      lightcolor=[("active", hover)], darkcolor=[("active", hover)])
-        style.configure("Flip.TButton", font=("Segoe UI", 12, "bold"), padding=(10, 8))
+        self.styles()
         # takefocus=False: Space/Enter/1/2/3 are handled by the window, so a
         # focused button must not fire a second time (which would skip a card)
         self.action_btn = ttk.Button(c, text="Flip", command=self.advance, width=16,
@@ -1286,6 +1279,17 @@ class StudyScreen(ttk.Frame):
         review = states.count("review")
         self.progress_var.set(f"{self.app.cards.deck_name(self.deck_id)}  ·  New {new}  ·  "
                               f"Learning {learning}  ·  Review {review}  ·  {self.reviewed} answered")
+
+    def styles(self):
+        """The answer buttons' colours (again when the colour theme changes)."""
+        style = ttk.Style(self)
+        for name, bg, hover in (("Again", "#7a3434", "#8c3f3f"), ("Hard", theme.RAISED, theme.RAISED_HOVER),
+                                ("Correct", theme.ACCENT, theme.ACCENT_HOVER)):
+            style.configure(f"{name}.TButton", background=bg, lightcolor=bg, darkcolor=bg,
+                            foreground="#ffffff", font=("Segoe UI", 12, "bold"), padding=(10, 8))
+            style.map(f"{name}.TButton", background=[("active", hover)],
+                      lightcolor=[("active", hover)], darkcolor=[("active", hover)])
+        style.configure("Flip.TButton", font=("Segoe UI", 12, "bold"), padding=(10, 8))
 
     # --- layout on the background picture
     def _text(self, tag: str, var: tk.StringVar, fill: str, anchor: str = "center", tags: tuple = ()):
@@ -1430,7 +1434,10 @@ def set_window_icon(root: tk.Tk) -> None:
     """The app's icon (assets/app.ico, in the colour theme) on its windows and taskbar button."""
     ico = shortcuts.themed_icon()
     try:
-        root.iconbitmap(default=ico)              # Windows: every window of the app
+        root.iconbitmap(default=ico)              # Windows: every window of the app (from now on)
+        for w in root.winfo_children():           # ... and the ones already open
+            if isinstance(w, tk.Toplevel):
+                w.iconbitmap(ico)
     except tk.TclError:
         try:
             if Image is not None:                 # elsewhere: the same picture
@@ -1480,9 +1487,11 @@ class SettingsDialog(tk.Toplevel):
             dot = tk.Canvas(cell, width=26, height=26, highlightthickness=0, bd=0, background=theme.BG)
             dot.create_oval(3, 3, 23, 23, fill=theme.shift_hex(THEME_SWATCH, theme.UI_HUES[name]), outline="")
             dot.pack()
-            ttk.Radiobutton(cell, text=name, value=name, variable=self.theme_var).pack(pady=(2, 0))
-            dot.bind("<Button-1>", lambda e, n=name: self.theme_var.set(n))
-        ttk.Label(body, text="Changing the theme restarts the app.", foreground=theme.SUBTLE).grid(
+            ttk.Radiobutton(cell, text=name, value=name, variable=self.theme_var,
+                            command=self.preview_theme).pack(pady=(2, 0))
+            dot.bind("<Button-1>", lambda e, n=name: (self.theme_var.set(n), self.preview_theme()))
+        self.start_theme = theme.NAME
+        ttk.Label(body, text="The colours change straight away; Save keeps them.", foreground=theme.SUBTLE).grid(
             row=11, column=0, columnspan=5, sticky="w", pady=(6, 0))
         if shortcuts.supported():
             ttk.Separator(body).grid(row=4, column=0, columnspan=5, sticky="ew", pady=(16, 12))
@@ -1493,15 +1502,25 @@ class SettingsDialog(tk.Toplevel):
         buttons = ttk.Frame(body)
         buttons.grid(row=12, column=0, columnspan=5, sticky="e", pady=(16, 0))
         ttk.Button(buttons, text="Save", command=self.save).pack(side="left")
-        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="left", padx=(6, 0))
+        ttk.Button(buttons, text="Cancel", command=self.cancel).pack(side="left", padx=(6, 0))
         self.bind("<Return>", lambda e: self.save())
-        self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<Escape>", lambda e: self.cancel())
+        self.protocol("WM_DELETE_WINDOW", self.cancel)
         self.update_idletasks()
         x = app.winfo_rootx() + (app.winfo_width() - self.winfo_reqwidth()) // 2
         y = app.winfo_rooty() + (app.winfo_height() - self.winfo_reqheight()) // 3
         self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
         self.w_entry.focus_set()
         self.w_entry.select_range(0, "end")
+
+    def preview_theme(self):
+        """A theme was picked: show it at once (Save keeps it, Cancel goes back)."""
+        self.app.apply_theme(self.theme_var.get())
+
+    def cancel(self):
+        if theme.NAME != self.start_theme:
+            self.app.apply_theme(self.start_theme)
+        self.destroy()
 
     def make_shortcuts(self):
         try:
@@ -1528,10 +1547,8 @@ class SettingsDialog(tk.Toplevel):
             return
         self.app.settings.set("window_width", w)
         self.app.settings.set("window_height", h)
-        new_theme = self.theme_var.get()
+        self.app.settings.set("theme", theme.NAME)     # (already showing: picked above)
         self.destroy()
-        if new_theme != theme.NAME:
-            self.app.change_theme(new_theme)
 
 
 class StudySettingsDialog(tk.Toplevel):
@@ -2739,31 +2756,37 @@ class App(tk.Tk):
             w, h = 1280, 1000
         return max(w, MIN_WINDOW[0]), max(h, MIN_WINDOW[1])
 
-    def change_theme(self, name: str):
-        """Settings → Theme: save it, then restart the app in the new colours
-        (every window is drawn with the theme's colours when it's built)."""
-        self.settings.set("theme", name)
-        if self.worker and self.worker.is_alive():
-            messagebox.showinfo("Theme", f"The {name} theme will be used the next time the app opens "
-                                "(it can't restart while a file is being transcribed).", parent=self)
+    def apply_theme(self, name: str):
+        """Switch to a colour theme now (Settings → Theme): every open window
+        is recoloured and the pictures are drawn again in the new colours."""
+        if name == theme.NAME or name not in theme.THEMES:
             return
-        win = self.template_window
-        if win and win.winfo_exists():
-            win.close()
-            if win.winfo_exists():                 # unsaved card layout and the user chose Cancel
-                return
+        self.config(cursor="watch")
+        self.update_idletasks()
+        try:
+            theme.change(self, name, also=(CARD_BG, CARD_EDGE))
+            self.study_screen.styles()
+            win = self.template_window
+            if win and win.winfo_exists():
+                win._style()
+            backdrop.reset()
+            set_window_icon(self)
+            self.home.retheme()
+            for b in backdrop.all_backdrops(self):
+                b.refresh()
+            if self.current_screen == "stats":
+                self.stats_screen.refresh()
+        finally:
+            self.config(cursor="")
         if shortcuts.supported() and self.settings.get("shortcuts_made"):
-            old = theme.NAME
-            theme.set_theme(name)                  # the shortcuts get the new theme's icon
-            try:
-                shortcuts.create()
-            except OSError:
-                pass
-            theme.set_theme(old)
-        stop_wav()
-        subprocess.Popen([sys.executable, os.path.join(APP_DIR, "app.py")], cwd=APP_DIR,
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        self.destroy()
+            # the desktop / Start menu shortcuts get the new icon (PowerShell is slow: in the background)
+            threading.Thread(target=self._update_shortcuts, daemon=True).start()
+
+    def _update_shortcuts(self):
+        try:
+            shortcuts.create()
+        except OSError:
+            pass
 
     def show_study_settings(self):
         """Main menu → Study settings (for the chosen deck)."""

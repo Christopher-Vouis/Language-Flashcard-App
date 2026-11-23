@@ -105,6 +105,74 @@ def shift_image(img, degrees: float | None = None):
     return out
 
 
+_COLOUR_OPTIONS = ("background", "foreground", "highlightbackground", "highlightcolor", "insertbackground",
+                   "selectbackground", "selectforeground", "activebackground", "activeforeground",
+                   "disabledforeground", "troughcolor", "selectcolor", "fieldbackground")
+_ITEM_OPTIONS = ("fill", "outline", "activefill", "activeoutline", "disabledfill")
+
+
+def change(root: tk.Tk, name: str, also: tuple = ()) -> None:
+    """Switch the colour theme while the app is running: restyle the ttk
+    widgets and swap every old theme colour for the new one in all open
+    windows (widgets, canvas items, text tags). `also` = more colours of the
+    blue design used directly (they're swapped too). Pictures are redrawn by
+    their owners (see App.apply_theme)."""
+    g = globals()
+    old_vals = {k: g[k] for k in _THEMED}
+    old_ui = UI_HUE
+    set_theme(name)
+    swap = {}
+    for k in _THEMED:
+        if old_vals[k].lower() != g[k].lower():
+            swap[old_vals[k].lower()] = g[k]
+    for c in also:
+        a, b = shift_hex(c, old_ui).lower(), tint(c)
+        if a != b.lower():
+            swap.setdefault(a, b)
+    apply(root, first=False)
+    if swap:
+        _recolour(root, swap)
+
+
+def _recolour(widget, swap: dict) -> None:
+    keys = set()
+    try:
+        keys = set(widget.keys())
+    except tk.TclError:
+        pass
+    for opt in _COLOUR_OPTIONS:
+        if opt in keys:
+            try:
+                v = str(widget.cget(opt)).lower()
+            except tk.TclError:
+                continue
+            if v in swap:
+                try:
+                    widget.configure(**{opt: swap[v]})
+                except tk.TclError:
+                    pass
+    if isinstance(widget, tk.Canvas):
+        for item in widget.find_all():
+            for opt in _ITEM_OPTIONS:
+                try:
+                    v = str(widget.itemcget(item, opt)).lower()
+                except tk.TclError:
+                    continue
+                if v in swap:
+                    widget.itemconfigure(item, **{opt: swap[v]})
+    elif isinstance(widget, tk.Text):
+        for tag in widget.tag_names():
+            for opt in ("background", "foreground"):
+                v = str(widget.tag_cget(tag, opt)).lower()
+                if v in swap:
+                    widget.tag_configure(tag, **{opt: swap[v]})
+    remembered = getattr(widget, "bg", None)     # a colour kept for later drawing (CardView)
+    if isinstance(remembered, str) and remembered.lower() in swap:
+        widget.bg = swap[remembered.lower()]
+    for child in widget.winfo_children():
+        _recolour(child, swap)
+
+
 def set_theme(name: str) -> None:
     """Choose the colour theme. Call before building any widgets (at start-up)."""
     global NAME, HUE, UI_HUE
@@ -120,11 +188,12 @@ def set_theme(name: str) -> None:
         g[k] = "#" + "".join(f"{v:02x}" for v in tint_rgb(tuple(int(base[k][i:i + 2], 16) for i in (1, 3, 5))))
 
 
-def apply(root: tk.Tk) -> ttk.Style:
-    """Style every widget type used by the app. Call once, before building
-    any widgets (some settings only affect widgets created afterwards)."""
+def apply(root: tk.Tk, first: bool = True) -> ttk.Style:
+    """Style every widget type used by the app. Called before building any
+    widgets, and again (first=False) when the colour theme changes."""
     style = ttk.Style(root)
-    style.theme_use("clam")
+    if first:
+        style.theme_use("clam")
     root.configure(background=BG)
 
     style.configure(".", background=BG, foreground=FG, fieldbackground=SURFACE,

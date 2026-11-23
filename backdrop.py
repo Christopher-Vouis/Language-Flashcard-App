@@ -63,6 +63,21 @@ def load_themed(name: str):
     return theme.shift_image(img) if img is not None else None
 
 
+def reset() -> None:
+    """The colour theme changed: the background pictures are made again."""
+    global _parts
+    _parts = None
+    _scaled.clear()
+
+
+def all_backdrops(widget) -> list:
+    """Every Backdrop in a window (to redraw them)."""
+    found = [widget] if isinstance(widget, Backdrop) else []
+    for child in widget.winfo_children():
+        found += all_backdrops(child)
+    return found
+
+
 def _layers():
     """Cut the background picture into its parts (once), in the current theme."""
     global _parts

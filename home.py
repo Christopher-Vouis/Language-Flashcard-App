@@ -192,6 +192,11 @@ class HomeScreen(ttk.Frame):
         if was_down and inside:
             command()
 
+    def retheme(self):
+        """The colour theme changed: the button picture and the background again."""
+        self.btn_src = backdrop.load_themed("menu_button.png")
+        self._render()
+
     def _gear_hover(self, on: bool):
         img = self._gear_imgs.get("hover" if on else "normal")
         if img is not None:
