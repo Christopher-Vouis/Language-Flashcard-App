@@ -8,6 +8,7 @@ tables and fields itself and ignores custom colors.
 
 from __future__ import annotations
 
+import colorsys
 import sys
 import tkinter as tk
 from tkinter import ttk
@@ -33,6 +34,90 @@ TARGET = "#ff7a6e"      # target word in study mode
 SCROLL = "#4a4d55"
 
 FONT = ("Segoe UI", 10)
+
+# ---- colour themes: the whole design turned to another hue (measured from the design
+# mock-ups). The big A / あ and anything white stay as they are.
+THEMES = {"Blue": 0, "Orange": -168, "Red": 161, "Green": -92, "Purple": 80}   # degrees, for the pictures
+# the app's own colours (buttons, selections, progress...) use hues a little closer to
+# each theme's name: blue 220° -> orange 32°, red 8°, green 135°, purple 280°
+UI_HUES = {"Blue": 0, "Orange": -188, "Red": -212, "Green": -85, "Purple": 60}
+NAME = "Blue"           # the current theme
+HUE = 0                 # its turn, in degrees (pictures)
+UI_HUE = 0              # its turn for the app's own colours
+_THEMED = ("BG", "SURFACE", "RAISED", "RAISED_HOVER", "RAISED_PRESS", "BORDER", "FG", "MUTED", "SUBTLE",
+           "DISABLED", "ACCENT", "ACCENT_HOVER", "SELECT", "IMAGE_BG", "CHECKED", "SCROLL")
+# (TARGET and HIGHLIGHT keep their meaning - red word, amber line - in every theme)
+
+
+def _luminance(rgb) -> float:
+    """How bright a colour looks (WCAG relative luminance, 0 - 1)."""
+    lin = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+
+def shift_hex(colour: str, degrees: float) -> str:
+    """A "#rrggbb" colour turned around the colour wheel. Its colourfulness and how
+    bright it LOOKS are kept (yellow and green look much brighter than blue at the
+    same lightness), so white text on it stays as readable as on the blue one."""
+    if not degrees:
+        return colour
+    rgb = [int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    target = _luminance(rgb)
+    h, l, s = colorsys.rgb_to_hls(*rgb)
+    h = (h + degrees / 360) % 1.0
+    lo, hi = 0.0, 1.0
+    for _ in range(30):                     # find the lightness that looks as bright as before
+        mid = (lo + hi) / 2
+        if _luminance(colorsys.hls_to_rgb(h, mid, s)) < target:
+            lo = mid
+        else:
+            hi = mid
+    return "#" + "".join(f"{round(v * 255):02x}" for v in colorsys.hls_to_rgb(h, (lo + hi) / 2, s))
+
+
+def tint(colour: str) -> str:
+    """A colour from the blue design, in the current theme."""
+    return shift_hex(colour, UI_HUE)
+
+
+def tint_rgb(rgb: tuple) -> tuple:
+    """A page colour of the background picture, in the current theme (as the picture is turned)."""
+    if not HUE:
+        return tuple(rgb)
+    h, l, s = colorsys.rgb_to_hls(*[v / 255 for v in rgb])
+    return tuple(round(v * 255) for v in colorsys.hls_to_rgb((h + HUE / 360) % 1.0, l, s))
+
+
+def shift_image(img, degrees: float | None = None):
+    """A picture from the blue design, turned to the current theme (white, black
+    and grey stay as they are)."""
+    degrees = HUE if degrees is None else degrees
+    if not degrees:
+        return img
+    alpha = img.getchannel("A") if img.mode in ("RGBA", "LA") else None
+    h, s, v = img.convert("RGB").convert("HSV").split()
+    turn = round(degrees / 360 * 256)
+    h = h.point(lambda x: (x + turn) % 256)
+    from PIL import Image
+    out = Image.merge("HSV", (h, s, v)).convert("RGB")
+    if alpha is not None:
+        out.putalpha(alpha)
+    return out
+
+
+def set_theme(name: str) -> None:
+    """Choose the colour theme. Call before building any widgets (at start-up)."""
+    global NAME, HUE, UI_HUE
+    if name not in THEMES:
+        name = "Blue"
+    g = globals()
+    base = g.setdefault("_BLUE", {k: g[k] for k in _THEMED})
+    NAME, HUE, UI_HUE = name, THEMES[name], UI_HUES[name]
+    for k in _THEMED:
+        g[k] = shift_hex(base[k], UI_HUE)
+    # the page colours must match the background picture's page exactly
+    for k in ("BG",):
+        g[k] = "#" + "".join(f"{v:02x}" for v in tint_rgb(tuple(int(base[k][i:i + 2], 16) for i in (1, 3, 5))))
 
 
 def apply(root: tk.Tk) -> ttk.Style:

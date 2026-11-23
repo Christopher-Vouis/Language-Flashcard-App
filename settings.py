@@ -15,6 +15,7 @@ DEFAULTS = {
     "shot_height": "",
     "window_width": 1280,       # the window's size when the app opens
     "window_height": 1000,
+    "theme": "Blue",            # colour theme: Blue, Orange, Red, Green, Purple
     "shortcuts_made": False,    # desktop + Start menu shortcuts made on the first run (once)
 }
 

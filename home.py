@@ -83,7 +83,7 @@ class HomeScreen(ttk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent)
         self.app = app
-        self.btn_src = backdrop.load("menu_button.png")
+        self.btn_src = backdrop.load_themed("menu_button.png")
         self._bg_img = None
         self._btn_imgs: dict[str, object] = {}
         self._size = (0, 0)

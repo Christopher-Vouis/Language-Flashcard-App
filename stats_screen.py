@@ -26,6 +26,7 @@ from stats import Stats
 
 BAND = 0.45
 PANEL_SHADE = 0.67                     # like the main menu's stats box
+# colours of the blue design; drawn in the current theme (theme.tint)
 BAR, BAR_TODAY, BAR_EMPTY = "#3d7bea", "#6aa6ff", "#3a3d43"
 LEVELS = ("#2b2e33", "#1f3f75", "#2a5bb0", "#3d7bea", "#6aa6ff")   # calendar: none → most
 FONT = "Segoe UI"
@@ -139,7 +140,7 @@ class StatsScreen(ttk.Frame):
         scale_top = step * 2
         for v in (0, step, scale_top):
             yy = bottom - (bottom - top) * v / scale_top
-            c.create_line(left, yy, right, yy, fill="#3a3d43", tags="content")
+            c.create_line(left, yy, right, yy, fill=theme.tint("#3a3d43"), tags="content")
             c.create_text(left - 8 * k, yy, text=str(v), anchor="e", fill=theme.MUTED,
                           font=(FONT, -round(11 * k)), tags="content")
         slot = (right - left) / len(days)
@@ -147,7 +148,7 @@ class StatsScreen(ttk.Frame):
         for i, (d, n) in enumerate(days):
             bx = left + slot * i + (slot - bw) / 2
             by = bottom - (bottom - top) * n / scale_top
-            colour = BAR_TODAY if d == st.today else (BAR if n else BAR_EMPTY)
+            colour = theme.tint(BAR_TODAY if d == st.today else (BAR if n else BAR_EMPTY))
             tag = f"bar{i}"
             c.create_rectangle(bx, min(by, bottom - 2), bx + bw, bottom, fill=colour, outline="",
                                tags=("content", tag))
@@ -210,7 +211,7 @@ class StatsScreen(ttk.Frame):
                 n = st.cards_per_day.get(d, 0)
                 cx, cy = left + week * cell, top + row * cell
                 tag = f"cal{week}_{row}"
-                c.create_rectangle(cx, cy, cx + sq, cy + sq, fill=LEVELS[level(n)],
+                c.create_rectangle(cx, cy, cx + sq, cy + sq, fill=theme.tint(LEVELS[level(n)]),
                                    outline=theme.FG if d == st.today else "", tags=("content", tag))
                 self._tip(tag, d, n)
         # key
@@ -219,7 +220,8 @@ class StatsScreen(ttk.Frame):
                       tags=("content", "key"))
         kx = c.bbox("key")[0] - 6 * k
         for colour in reversed(LEVELS):
-            c.create_rectangle(kx - 12 * k, ky, kx, ky + 12 * k, fill=colour, outline="", tags="content")
+            c.create_rectangle(kx - 12 * k, ky, kx, ky + 12 * k, fill=theme.tint(colour), outline="",
+                               tags="content")
             kx -= 15 * k
         c.create_text(kx - 2 * k, ky + 6 * k, text="less", anchor="e", fill=theme.MUTED,
                       font=(FONT, -round(10 * k)), tags="content")

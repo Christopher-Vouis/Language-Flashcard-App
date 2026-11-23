@@ -23,8 +23,11 @@ Create desktop and Start menu shortcuts** makes them again. Before that, double-
 (or run `app.py`). The app opens at the **main menu**:
 
 - **⚙ gear** (top right) — a small **Settings** window: the **window size when the app opens**
-  (type a width and height, or **Use the current size**; it applies the next time the app opens), and
-  **Create desktop and Start menu shortcuts**.
+  (type a width and height, or **Use the current size**; it applies the next time the app opens),
+  **Create desktop and Start menu shortcuts**, and the **Theme**: Blue (the default), Orange, Red, Green
+  or Purple. A theme recolours the dots, the background and its stripes, and the app's buttons,
+  selections and charts (the big A / あ and the white lines stay as they are); choosing one restarts
+  the app in the new colours, and the icon on its windows and shortcuts follows.
 - **Welcome, <profile>** (top left) — **change** opens the Profiles screen; **sign out** returns to it and
   locks the rest of the app until a profile signs in.
 - **Deck** — the name of the deck being studied, with its New / Due / Total.
@@ -257,7 +260,7 @@ Command line alternative:
 - `assets\` — the background picture, the dots band and the main menu's button picture.
 - The window opens at 1280 × 1000 (change it in Settings, the gear on the main menu). If it is narrower than 1180 px, it widens by itself for the Create screen and goes back afterwards.
 - `subtitles.py` — reads .srt / .vtt / .ass subtitle files as lines.
-- `theme.py` — the dark color scheme; every color is defined at the top, so it's easy to adjust.
+- `theme.py` — the dark color scheme (every color is defined at the top, so it's easy to adjust) and the colour themes: each is the blue design turned to another hue.
 - `templates.py`, `card_view.py`, `template_editor.py` — card layouts: the data, drawing a card, and the drag-and-drop editor.
 - `audio.py` — plays the clips.
 - `app.py` — desktop window.

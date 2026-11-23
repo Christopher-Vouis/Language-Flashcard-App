@@ -52,22 +52,48 @@ _parts = None
 _scaled: dict = {}           # height -> scaled parts (resizing the 3840 px band is slow)
 
 
+def page_colour() -> tuple:
+    """The page colour, in the current theme."""
+    return theme.tint_rgb(BASE)
+
+
+def load_themed(name: str):
+    """An asset picture, turned to the current colour theme."""
+    img = load(name)
+    return theme.shift_image(img) if img is not None else None
+
+
+def _keep_letters(original, themed):
+    """The A / あ keep their own colour in every theme: only the page around
+    them takes the theme's tint."""
+    if not theme.HUE:
+        return original
+    from PIL import ImageChops, ImageFilter
+    grey = original.convert("L")
+    page = Image.new("L", grey.size, round(sum(BASE) / 3))
+    # the letters are the parts lighter than the page; soften the edge
+    mask = ImageChops.subtract(grey, page).point(lambda v: min(v * 40, 255)).filter(ImageFilter.GaussianBlur(1.5))
+    return Image.composite(original, themed, mask)
+
+
 def _layers():
-    """Cut the background picture into its parts (once)."""
+    """Cut the background picture into its parts (once), in the current theme."""
     global _parts
     if _parts is None:
         src = load("menu_bg.png")
         if src is None:
             _parts = ()
             return _parts
-        stripes = src.crop(STRIPES_BOX)
+        themed = theme.shift_image(src)
+        stripes = themed.crop(STRIPES_BOX)
         gx0, gy0, gx1, gy1 = GLYPH_BOX            # blank the letters out of the stripes part
-        stripes.paste(BASE, (gx0 - STRIPES_BOX[0], gy0 - STRIPES_BOX[1],
-                             gx1 - STRIPES_BOX[0], gy1 - STRIPES_BOX[1]))
+        stripes.paste(page_colour(), (gx0 - STRIPES_BOX[0], gy0 - STRIPES_BOX[1],
+                               gx1 - STRIPES_BOX[0], gy1 - STRIPES_BOX[1]))
         # the white line and its shadow are the same all the way across: one column is enough
-        dots = load("menu_dots.png") or src.crop((0, 0, DESIGN_W, LINE_Y))
-        line = src.crop((0, LINE_Y, 1, HEADER_H))
-        _parts = (dots, line, src.crop(GLYPH_BOX), stripes)
+        dots = load_themed("menu_dots.png") or themed.crop((0, 0, DESIGN_W, LINE_Y))
+        line = themed.crop((0, LINE_Y, 1, HEADER_H))
+        glyphs = _keep_letters(src.crop(GLYPH_BOX), themed.crop(GLYPH_BOX))
+        _parts = (dots, line, glyphs, stripes)
     return _parts
 
 
@@ -97,7 +123,7 @@ def compose(w: int, h: int, screen_w: int, band: float = 1.0, line: bool = True)
     between dots_height and header_height."""
     sy = h / DESIGN_H
     dots, line_img, glyphs, stripes, line_h = _scaled_parts(h, sy)
-    img = Image.new("RGB", (w, h), BASE)
+    img = Image.new("RGB", (w, h), page_colour())
     img.paste(stripes, (0, h - stripes.height))
     home = (GLYPH_BOX[0] + GLYPH_BOX[2]) / 2 / DESIGN_W
     narrow = DESIGN_W * sy
@@ -151,7 +177,7 @@ LINE_WHITE = (234, 234, 234)
 
 
 def draw_tabs(img, tabs: list[tuple[float, float]], active: int, top: float, line_y: float,
-              radius: float, flare: float, sy: float, fill=BASE):
+              radius: float, flare: float, sy: float, fill=None):
     """The white line across the window with tabs standing on it, like folder tabs.
 
     tabs    (left, right) of each tab's outer edge, in px
@@ -211,7 +237,7 @@ def draw_tabs(img, tabs: list[tuple[float, float]], active: int, top: float, lin
     tabs_in = tabs_in.resize((w, height), Image.LANCZOS)
 
     strip = img.crop((0, 0, w, height))
-    strip.paste(fill, (0, 0), tabs_in)            # the tabs' insides cover the dots
+    strip.paste(fill or page_colour(), (0, 0), tabs_in)  # the tabs' insides cover the dots
     # shadow: under every bit of white, fading over shadow_len px down the page / tab
     shadow = Image.new("L", (w, height), 0)
     for dist in range(1, shadow_len + 1):

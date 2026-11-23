@@ -19,6 +19,7 @@ settings.json
 # The app's own artwork (main menu background and button) does belong in the repo.
 !assets/
 !assets/*.png
+assets/app_*.ico
 
 # --- Local environment
 .venv/

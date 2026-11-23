@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import json
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -1150,7 +1151,7 @@ class AddCardsWindow(CardsWindow):
 STUDY_BAND = 0.45          # Study shows the lower part of the dots band
 CREATE_BAND = 0.45         # Create: the same, with its tabs standing on the line
 CREATE_TABS = (("import", "Import Content"), ("cards", "Create Cards"))
-CARD_BG, CARD_EDGE = "#26282c", "#3c3f46"
+CARD_BG, CARD_EDGE = "#26282c", "#3c3f46"       # (blue design; drawn with theme.tint)
 CARD_MARGIN = 24
 
 
@@ -1188,7 +1189,7 @@ class StudyScreen(ttk.Frame):
         self._text("layout_note", self.layout_var, fill=theme.MUTED, anchor="e")
 
         # ---- the card, on a raised panel; drawn from the card's layout (templates.py)
-        self.view = CardView(c, bg=CARD_BG)
+        self.view = CardView(c, bg=theme.tint(CARD_BG))
         c.create_window(0, 0, anchor="nw", tags="card", window=self.view)
 
         # ---- buttons: Flip (front), then Again / Hard / Correct (back)
@@ -1331,7 +1332,7 @@ class StudyScreen(ttk.Frame):
         c.coords("card", x0 + pad, top + pad)
         c.itemconfigure("card", width=max(cw - 2 * pad, 10), height=max(bottom - top - 2 * pad, 10))
         return [{"box": (x0, top, x0 + cw, bottom), "radius": 16,
-                 "fill": backdrop.hex_rgb(CARD_BG), "outline": backdrop.hex_rgb(CARD_EDGE)}]
+                 "fill": backdrop.hex_rgb(theme.tint(CARD_BG)), "outline": backdrop.hex_rgb(theme.tint(CARD_EDGE))}]
 
     def _show_buttons(self, back: bool, enabled: bool = True):
         """Flip on the front; Again / Hard / Correct on the back."""
@@ -1422,11 +1423,12 @@ class StudyScreen(ttk.Frame):
 
 # ------------------------------------------------------------ settings
 MIN_WINDOW = (640, 480)
+THEME_SWATCH = "#2f7fe0"     # the dots' blue; each theme's swatch is this turned to its hue
 
 
 def set_window_icon(root: tk.Tk) -> None:
-    """The app's icon (assets/app.ico) on its windows and taskbar button."""
-    ico = shortcuts.ICON
+    """The app's icon (assets/app.ico, in the colour theme) on its windows and taskbar button."""
+    ico = shortcuts.themed_icon()
     try:
         root.iconbitmap(default=ico)              # Windows: every window of the app
     except tk.TclError:
@@ -1465,6 +1467,23 @@ class SettingsDialog(tk.Toplevel):
             row=2, column=0, columnspan=5, sticky="w", pady=(10, 0))
         ttk.Label(body, text="Takes effect the next time the app opens.", foreground=theme.SUBTLE).grid(
             row=3, column=0, columnspan=5, sticky="w", pady=(10, 0))
+        # ---- colour theme
+        ttk.Separator(body).grid(row=8, column=0, columnspan=5, sticky="ew", pady=(16, 12))
+        ttk.Label(body, text="Theme", font=("Segoe UI", 10, "bold")).grid(
+            row=9, column=0, columnspan=5, sticky="w", pady=(0, 6))
+        self.theme_var = tk.StringVar(value=theme.NAME)
+        swatches = ttk.Frame(body)
+        swatches.grid(row=10, column=0, columnspan=5, sticky="w")
+        for col, name in enumerate(theme.THEMES):
+            cell = ttk.Frame(swatches)
+            cell.grid(row=0, column=col, padx=(0, 14))
+            dot = tk.Canvas(cell, width=26, height=26, highlightthickness=0, bd=0, background=theme.BG)
+            dot.create_oval(3, 3, 23, 23, fill=theme.shift_hex(THEME_SWATCH, theme.UI_HUES[name]), outline="")
+            dot.pack()
+            ttk.Radiobutton(cell, text=name, value=name, variable=self.theme_var).pack(pady=(2, 0))
+            dot.bind("<Button-1>", lambda e, n=name: self.theme_var.set(n))
+        ttk.Label(body, text="Changing the theme restarts the app.", foreground=theme.SUBTLE).grid(
+            row=11, column=0, columnspan=5, sticky="w", pady=(6, 0))
         if shortcuts.supported():
             ttk.Separator(body).grid(row=4, column=0, columnspan=5, sticky="ew", pady=(16, 12))
             ttk.Label(body, text="Shortcuts", font=("Segoe UI", 10, "bold")).grid(
@@ -1472,7 +1491,7 @@ class SettingsDialog(tk.Toplevel):
             ttk.Button(body, text="Create desktop and Start menu shortcuts", command=self.make_shortcuts).grid(
                 row=6, column=0, columnspan=5, sticky="w")
         buttons = ttk.Frame(body)
-        buttons.grid(row=7, column=0, columnspan=5, sticky="e", pady=(16, 0))
+        buttons.grid(row=12, column=0, columnspan=5, sticky="e", pady=(16, 0))
         ttk.Button(buttons, text="Save", command=self.save).pack(side="left")
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="left", padx=(6, 0))
         self.bind("<Return>", lambda e: self.save())
@@ -1509,7 +1528,10 @@ class SettingsDialog(tk.Toplevel):
             return
         self.app.settings.set("window_width", w)
         self.app.settings.set("window_height", h)
+        new_theme = self.theme_var.get()
         self.destroy()
+        if new_theme != theme.NAME:
+            self.app.change_theme(new_theme)
 
 
 class StudySettingsDialog(tk.Toplevel):
@@ -1578,6 +1600,7 @@ class App(tk.Tk):
         super().__init__()
         self.title("Language Flashcards")
         self.settings = Settings(APP_DIR)
+        theme.set_theme(self.settings.get("theme"))   # colour theme (Settings); before any widgets
         # opens at the size chosen in Settings (1280 x 1000 at first), centred on the screen
         width, height = self.default_size()
         self.geometry(f"{width}x{height}+{max((self.winfo_screenwidth() - width) // 2, 0)}"
@@ -2138,7 +2161,7 @@ class App(tk.Tk):
             c.coords(tag, m + pad, top + pad)
         c.itemconfigure("body", width=max(w - 2 * (m + pad), 10), height=max(h - m - top - 2 * pad, 10))
         return [{"box": box, "radius": 14, "fill": backdrop.hex_rgb(theme.BG),
-                 "outline": backdrop.hex_rgb(CARD_EDGE)}]
+                 "outline": backdrop.hex_rgb(theme.tint(CARD_EDGE))}]
 
     def _draw_create_tabs(self, img):
         """The white line with the tabs on it (into the background picture)."""
@@ -2715,6 +2738,32 @@ class App(tk.Tk):
         except (TypeError, ValueError):
             w, h = 1280, 1000
         return max(w, MIN_WINDOW[0]), max(h, MIN_WINDOW[1])
+
+    def change_theme(self, name: str):
+        """Settings → Theme: save it, then restart the app in the new colours
+        (every window is drawn with the theme's colours when it's built)."""
+        self.settings.set("theme", name)
+        if self.worker and self.worker.is_alive():
+            messagebox.showinfo("Theme", f"The {name} theme will be used the next time the app opens "
+                                "(it can't restart while a file is being transcribed).", parent=self)
+            return
+        win = self.template_window
+        if win and win.winfo_exists():
+            win.close()
+            if win.winfo_exists():                 # unsaved card layout and the user chose Cancel
+                return
+        if shortcuts.supported() and self.settings.get("shortcuts_made"):
+            old = theme.NAME
+            theme.set_theme(name)                  # the shortcuts get the new theme's icon
+            try:
+                shortcuts.create()
+            except OSError:
+                pass
+            theme.set_theme(old)
+        stop_wav()
+        subprocess.Popen([sys.executable, os.path.join(APP_DIR, "app.py")], cwd=APP_DIR,
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        self.destroy()
 
     def show_study_settings(self):
         """Main menu → Study settings (for the chosen deck)."""

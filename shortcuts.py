@@ -39,6 +39,23 @@ def supported() -> bool:
     return os.name == "nt"
 
 
+def themed_icon() -> str:
+    """The icon in the current colour theme: assets/app.ico itself for Blue,
+    otherwise a recoloured copy (assets/app_<theme>.ico, made when needed)."""
+    import theme
+    if not theme.HUE:
+        return ICON
+    path = os.path.join(APP_DIR, "assets", f"app_{theme.NAME.lower()}.ico")
+    if not os.path.isfile(path):
+        try:
+            from PIL import Image
+            img = theme.shift_image(Image.open(ICON).convert("RGBA"))
+            img.save(path, sizes=[(s, s) for s in (16, 20, 24, 32, 40, 48, 64, 128, 256)])
+        except Exception:  # noqa: BLE001 - fall back to the blue icon
+            return ICON
+    return path
+
+
 def launcher() -> str:
     """The program the shortcut runs: pythonw.exe (no console) next to the
     Python running the app - normally .venv's."""
@@ -55,7 +72,7 @@ def create() -> list[str]:
     if not supported():
         raise OSError("Shortcuts can only be made on Windows.")
     env = dict(os.environ, LF_NAME=NAME, LF_TARGET=launcher(), LF_SCRIPT=os.path.join(APP_DIR, "app.py"),
-               LF_DIR=APP_DIR, LF_ICON=ICON)
+               LF_DIR=APP_DIR, LF_ICON=themed_icon())
     try:
         r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                             "-Command", _SCRIPT], capture_output=True, text=True, env=env, timeout=60,
