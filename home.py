@@ -21,8 +21,9 @@ and size below is in those design pixels and is scaled to the window:
               │  Study   │ │  Create  │
               └──────────┘ └──────────┘
 
-The picture, the stats panel and the buttons are composed with Pillow (Tk has
-no anti-aliased shapes); the text is drawn by Tk so it stays sharp.
+The picture and the stats panel are backdrop.Scene items, the buttons are
+pictures made with Pillow (Tk has no anti-aliased shapes), all made once per
+size and then only moved; the text is drawn by Tk so it stays sharp.
 """
 
 from __future__ import annotations
@@ -84,16 +85,18 @@ class HomeScreen(ttk.Frame):
         super().__init__(parent)
         self.app = app
         self.btn_src = backdrop.load_themed("menu_button.png")
-        self._bg_img = None
         self._btn_imgs: dict[str, object] = {}
         self._size = (0, 0)
-        self._job = None
+        self._settle = None
+        self.active = True
+        self._dirty = False
+        self._img_size = None             # the size the button / gear pictures were made for
         self._btn_state = {"study": "normal", "create": "normal", "stats": "normal"}
         self._down: str | None = None
 
         self.canvas = c = tk.Canvas(self, highlightthickness=0, bd=0, background=theme.BG)
         c.pack(fill="both", expand=True)
-        c.create_image(0, 0, anchor="nw", tags="bg")
+        self.scene = backdrop.Scene(c)
 
         # ---- header
         self._outlined("welcome", anchor="w")
@@ -195,6 +198,8 @@ class HomeScreen(ttk.Frame):
     def retheme(self):
         """The colour theme changed: the button picture and the background again."""
         self.btn_src = backdrop.load_themed("menu_button.png")
+        self._img_size = None
+        self.scene.retheme()
         self._render()
 
     def _gear_hover(self, on: bool):
@@ -222,14 +227,27 @@ class HomeScreen(ttk.Frame):
         menu.tk_popup(self.canvas.winfo_rootx() + x0, self.canvas.winfo_rooty() + y1 + 4)
 
     # ------------------------------------------------------------ layout
-    def _on_configure(self, _e=None):
-        if self._job:
-            self.after_cancel(self._job)
-        # first draw at once; while the window is being dragged, wait for it to settle
-        self._job = self.after(1 if self._size == (0, 0) else 40, self._render)
+    def set_active(self, active: bool):
+        """Shown or not: while hidden, size changes wait until it's shown again."""
+        self.active = active
+        if active and self._dirty:
+            self._render()
 
-    def _render(self):
-        self._job = None
+    def _on_configure(self, _e=None):
+        if not self.active:
+            self._dirty = True
+            return
+        self._render(fast=self._size != (0, 0))      # at once; quickly while being dragged
+
+    def _settled(self):
+        self._settle = None
+        if self.active:
+            self._render()
+        else:
+            self._dirty = True
+
+    def _render(self, fast: bool = False):
+        self._dirty = False
         c = self.canvas
         w, h = c.winfo_width(), c.winfo_height()
         if w < 20 or h < 20:
@@ -248,17 +266,12 @@ class HomeScreen(ttk.Frame):
         # ---- picture: background + stats panel
         px0, py0 = at(301, 498, DECK_Y)
         px1, py1 = at(901, 797, DECK_Y)
-        if backdrop.available():
-            img, _dots_h, _header_h = backdrop.compose(w, h, self.winfo_screenwidth())
-            # translucent: the picture shows through, darkened (measured from the design)
-            backdrop.draw_panel(img, (px0, py0, px1, py1), 26 * s, shade=PANEL_SHADE)
-            self._bg_img = ImageTk.PhotoImage(img)
-            c.itemconfigure("bg", image=self._bg_img)
-            c.delete("panel")
-        else:
-            c.delete("panel")
-            c.create_rectangle(px0, py0, px1, py1, fill="#101113", outline="", tags="panel")
-            c.tag_raise("panel", "bg")
+        self.scene.place(w, h, fast)
+        # translucent: the picture shows through, darkened (measured from the design)
+        self.scene.panels([{"box": (px0, py0, px1, py1), "radius": 26 * s, "shade": PANEL_SHADE}])
+        if self._settle:
+            self.after_cancel(self._settle)
+            self._settle = None
 
         # ---- header (kept at the left edge)
         hy = lambda y: HEADER_Y * sy + (y - HEADER_Y) * s      # noqa: E731
@@ -272,12 +285,22 @@ class HomeScreen(ttk.Frame):
             x = c.bbox(tag)[2] + 9 * s
 
         # ---- gear, kept at the right edge
-        if Image is not None:
-            g = max(round(GEAR_SIZE * s), 20)
+        row = 3 * 400 + 2 * 26                    # the buttons' row (design px)
+        bs = min(s, (w - 32) / row)               # the buttons' size
+        bw, bh = max(round(400 * bs), 8), max(round(200 * bs), 8)
+        g = max(round(GEAR_SIZE * s), 20)
+        if Image is not None and self._img_size != (g, bw, bh):
+            # (made again only when their size changes, not on every move of the window edge)
             stroke = max(3 * s, 1.4)
             self._gear_imgs = {"normal": ImageTk.PhotoImage(gear_image(g, GEAR, stroke)),
                                "hover": ImageTk.PhotoImage(gear_image(g, GEAR_HOVER, stroke * 1.15))}
             c.itemconfigure("gear", image=self._gear_imgs["normal"])
+            if self.btn_src is not None:
+                base = self.btn_src.resize((bw, bh), Image.BILINEAR if fast else Image.LANCZOS)
+                self._btn_imgs = {"normal": ImageTk.PhotoImage(base),
+                                  "hover": ImageTk.PhotoImage(ImageEnhance.Brightness(base).enhance(1.22)),
+                                  "pressed": ImageTk.PhotoImage(ImageEnhance.Brightness(base).enhance(0.8))}
+            self._img_size = None if fast else (g, bw, bh)
         c.coords("gear", w - GEAR_RIGHT * s, hy(GEAR_TOP))
 
         # ---- deck block
@@ -302,14 +325,6 @@ class HomeScreen(ttk.Frame):
             x += width + gap
 
         # ---- Study / Create / Stats: one centred row; it shrinks if the window is too narrow
-        row = 3 * 400 + 2 * 26                    # design px
-        bs = min(s, (w - 32) / row)               # the buttons' size
-        bw, bh = max(round(400 * bs), 8), max(round(200 * bs), 8)
-        if self.btn_src is not None:
-            base = self.btn_src.resize((bw, bh), Image.LANCZOS)
-            self._btn_imgs = {"normal": ImageTk.PhotoImage(base),
-                              "hover": ImageTk.PhotoImage(ImageEnhance.Brightness(base).enhance(1.22)),
-                              "pressed": ImageTk.PhotoImage(ImageEnhance.Brightness(base).enhance(0.8))}
         for i, key in enumerate(("study", "create", "stats")):
             _x, y = at(600, 1150, BUTTONS_Y)
             x = w / 2 + (i - 1) * (400 + 26) * bs
@@ -319,6 +334,8 @@ class HomeScreen(ttk.Frame):
                 c.coords(f"box_{key}", x - bw / 2, y - bh / 2, x + bw / 2, y + bh / 2)
             self._place_outlined(f"txt_{key}", x, y - 10 * bs, (HEAD_FONT, -max(round(66 * bs), 8), "bold"), 2 * bs)
             self._show_button(key)
+        if self.scene.fast or (Image is not None and self._img_size is None):
+            self._settle = self.after(150, self._settled)      # quick pictures: proper ones when it stops
 
     # ------------------------------------------------------------ data
     def update_view(self, profile_name: str, deck_name: str, new: int, due: int, total: int):

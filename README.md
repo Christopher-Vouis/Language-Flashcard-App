@@ -266,7 +266,12 @@ Command line alternative:
   a wider window shows more of the dots band (`assets\menu_dots.png`, 3840 px wide), the A / あ drift
   to the right as the window widens, and the stripes stay in the bottom-left corner. On Study the card
   sits on a raised panel, and on Create the controls sit on one panel, with the picture around them.
-  `draw_tabs` draws Create's tabs on the white line, with the line's shadow following their outline.
+  `tabs_layer` draws Create's tabs on the white line, with the line's shadow following their outline.
+  The picture is made of separate canvas items (dots tiles, line, A / あ, stripes, tabs, panel corners),
+  made once per window height and then only moved, so resizing keeps up with the mouse; while the height
+  is being dragged the parts are scaled quickly, and properly once it stops.
+- The screens (main menu, Create, Study, Stats, Profiles) are all built at the start and stacked; changing
+  screens just brings one to the front. A screen that isn't shown waits until it is to fit a new window size.
 - `assets\` — the background picture, the dots band and the main menu's button picture.
 - The window opens at 1280 × 1000 (change it in Settings, the gear on the main menu). If it is narrower than 1180 px, it widens by itself for the Create screen and goes back afterwards.
 - `subtitles.py` — reads .srt / .vtt / .ass subtitle files as lines.

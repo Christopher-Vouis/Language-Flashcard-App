@@ -1839,6 +1839,14 @@ class App(tk.Tk):
         self._build_profiles()
         self.study_screen = StudyScreen(self, self)
         self.stats_screen = StatsScreen(self, self)
+        # every screen is laid out once, stacked on the others; showing one raises it
+        # (no unmapping and mapping again, so changing screens doesn't flicker)
+        for name, screen in self._screens().items():
+            screen.place(x=0, y=0, relwidth=1, relheight=1)
+            for part in self._screen_parts(name):
+                part.set_active(False)          # a hidden screen lays itself out when it's shown
+        self.bind_all("<Tab>", lambda e: self._tab_to(e, True))
+        self.bind_all("<<PrevWindow>>", lambda e: self._tab_to(e, False))
         for key in ("<space>", "<Return>", "<KeyPress-r>", "<KeyPress-R>", "<Escape>",
                     "<KeyPress-1>", "<KeyPress-2>", "<KeyPress-3>", "<KP_1>", "<KP_2>", "<KP_3>", "<KP_Enter>"):
             self.bind(key, self._study_key)
@@ -1898,7 +1906,7 @@ class App(tk.Tk):
         picture (backdrop.py), with the dots band above and a Main menu button."""
         pad = {"padx": 6, "pady": 4}
         canvas = self.create_canvas = Backdrop(self.create_screen, band=CREATE_BAND, layout=self._layout_create,
-                                               decorate=self._draw_create_tabs)
+                                               tabs=self._create_tabs)
         canvas.pack(fill="both", expand=True)
         canvas.create_window(0, 0, anchor="w", tags="menu_btn", window=ttk.Button(
             canvas, text="←  Main menu", command=self.show_home, takefocus=False))
@@ -2340,15 +2348,15 @@ class App(tk.Tk):
         return [{"box": box, "radius": 14, "fill": backdrop.hex_rgb(theme.BG),
                  "outline": backdrop.hex_rgb(theme.tint(CARD_EDGE))}]
 
-    def _draw_create_tabs(self, img):
-        """The white line with the tabs on it (into the background picture)."""
+    def _create_tabs(self) -> dict | None:
+        """The white line with the tabs on it (backdrop.Scene.set_tabs)."""
         if not self._tab_geom:
-            return
+            return None
         top, line_y, tab_h, sy = self._tab_geom
         names = [n for n, _l in CREATE_TABS]
-        backdrop.draw_tabs(img, [(l, r) for (l, _t, r, _b) in (self._tabs[n] for n in names)],
-                           names.index(self.create_tab), top, line_y,
-                           radius=tab_h * 0.36, flare=tab_h * 0.2, sy=sy)
+        return {"tabs": [(l, r) for (l, _t, r, _b) in (self._tabs[n] for n in names)],
+                "active": names.index(self.create_tab), "top": top, "line_y": line_y,
+                "radius": tab_h * 0.36, "flare": tab_h * 0.2, "sy": sy}
 
     def _style_tabs(self):
         for name, _label in CREATE_TABS:
@@ -2933,7 +2941,7 @@ class App(tk.Tk):
             set_window_icon(self)
             self.home.retheme()
             for b in backdrop.all_backdrops(self):
-                b.refresh()
+                b.retheme()
             if self.current_screen == "stats":
                 self.stats_screen.refresh()
         finally:
@@ -2989,9 +2997,17 @@ class App(tk.Tk):
             if abs(w - widened[1]) <= 2:              # still the width set above
                 self.geometry(f"{widened[0]}x{h}+{widened[2]}+{y}")
 
+    def _screens(self) -> dict:
+        return {"home": self.home_screen, "create": self.create_screen, "study": self.study_screen,
+                "stats": self.stats_screen, "profiles": self.profiles_screen}
+
+    def _screen_parts(self, name: str) -> list:
+        """What draws a screen's background (laid out only while the screen is shown)."""
+        return {"home": [self.home], "create": [self.create_canvas], "study": [self.study_screen.canvas],
+                "stats": [self.stats_screen.canvas]}.get(name, [])
+
     def _show_screen(self, name: str):
-        screens = {"home": self.home_screen, "create": self.create_screen, "study": self.study_screen,
-                   "stats": self.stats_screen, "profiles": self.profiles_screen}
+        screens = self._screens()
         if self.signed_out and name != "profiles":
             name = "profiles"        # signed out: nothing else until someone signs in
         if name == self.current_screen:
@@ -2999,12 +3015,42 @@ class App(tk.Tk):
         if self.current_screen == "study":
             self.study_screen.leave()
         if self.current_screen:
-            screens[self.current_screen].pack_forget()
+            for part in self._screen_parts(self.current_screen):
+                part.set_active(False)
+        if self.current_screen == "create" and self.saved_window.browser.web is not None:
+            # the web page is a separate Windows window: hide it with its screen
+            self.create_canvas.itemconfigure("body_cards", state="hidden")
         self._fit_window(name)
-        screens[name].pack(fill="both", expand=True)
+        for part in self._screen_parts(name):
+            part.set_active(True)
+        if name == "create":
+            self.create_canvas.itemconfigure("body_cards", state="normal" if self.create_tab == "cards"
+                                             else "hidden")
+        screens[name].tkraise()
         screens[name].focus_set()  # don't leave keyboard focus on a hidden screen's widget
         self.current_screen = name
         self._set_title()
+
+    def _tab_to(self, event, forward: bool):
+        """Tab / Shift+Tab: the next control, skipping the screens underneath."""
+        w = event.widget
+        if not isinstance(w, tk.Misc):
+            return None
+        hidden = [str(s) for n, s in self._screens().items() if n != self.current_screen]
+        target = w
+        try:
+            for _ in range(1000):
+                target = target.tk_focusNext() if forward else target.tk_focusPrev()
+                if target is None or target == w:
+                    break
+                path = str(target)
+                if not any(path == h or path.startswith(h + ".") for h in hidden):
+                    break
+            if target is not None:
+                self.tk.call("tk::TabToWindow", str(target))
+        except (tk.TclError, KeyError):
+            pass
+        return "break"
 
     def _set_title(self):
         tab = dict(CREATE_TABS).get(getattr(self, "create_tab", ""), "")
