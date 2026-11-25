@@ -141,8 +141,10 @@ On **Import Content**: **Browse...** → pick a file → **Transcribe**.
 ### Flashcards
 
 - On **Create → Create Cards**, select a line and click **＋ New card...** (or Enter / Ctrl+N / right-click).
-  The card editor shows the screenshot, a **▶ Play** button and the sentence. Highlight a word in the
-  sentence and click **Use selection as target word**, or type it, then fill in **Reading** and
+  The card form opens right there, in place of the preview next to the list (**Save card** or
+  **Cancel**/Esc puts the preview back). It shows the screenshot, a **▶ Play** button and the sentence. Highlight a word in the
+  sentence and click **Use as target word**, or type it (**🔍 Look up** searches the highlighted word,
+  or the target word, in the browser on the right), then fill in **Reading** and
   **Definition**, tick the **Decks** it belongs in (one or more; the deck chosen on the main menu is
   ticked for you, and **＋ New deck...** makes one on the spot), then click **Save card** (Ctrl+Enter).
   You can make several cards from one line;
@@ -153,6 +155,14 @@ On **Import Content**: **Browse...** → pick a file → **Transcribe**.
   the card's decks and its images. **Add to deck ▾** (also on right-click) adds the selected card(s) to a deck,
   keeping their other decks; decks they're already in are shown ✓, and **＋ New deck...** makes one.
   **Delete selected** removes cards.
+- **The browser** (right side of Create Cards; **🌐 Browser** / **Hide browser** shows or hides it) is a
+  web page inside the app for looking words up: ◀ ▶ ⟳, an address box (typed words that aren't an
+  address are searched on Google), and **Look up in** a site (Jisho, Wiktionary, Google Translate,
+  Google Images, Forvo). ↗ opens the page in your normal browser. It's an experiment built on
+  [tkwry](https://github.com/mashu3/tkwry) (Microsoft Edge WebView2 inside the window, which Windows 10/11
+  already have): the first time it's shown, it offers to install tkwry (a small download); if WebView2 is
+  missing, it links to Microsoft's download page. Sign-ins and cookies are kept in `browser_data\`.
+  Drag the dividers between the three parts to change their widths.
 - Cards live in `cards\`: `cards.json` (the decks, plus each card's fields: `target_word`, `reading`, `definition`, `sentence`,
   `audio_clip`, `screenshot`, `images`, `decks`, an optional own `layout`, source file and times) and their own media copies in `cards\media\`,
   so deleting a saved line doesn't affect its cards.
@@ -263,5 +273,6 @@ Command line alternative:
 - `theme.py` — the dark color scheme (every color is defined at the top, so it's easy to adjust) and the colour themes: each is the blue design turned to another hue.
 - `templates.py`, `card_view.py`, `template_editor.py` — card layouts: the data, drawing a card, and the drag-and-drop editor.
 - `audio.py` — plays the clips.
+- `browser_pane.py` — the browser on Create Cards (tkwry / WebView2, installed on first use).
 - `app.py` — desktop window.
 - `transcribe_cli.py` — command-line version.

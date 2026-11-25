@@ -17,6 +17,8 @@ DEFAULTS = {
     "window_height": 1000,
     "theme": "Blue",            # colour theme: Blue, Orange, Red, Green, Purple
     "shortcuts_made": False,    # desktop + Start menu shortcuts made on the first run (once)
+    "browser_pane": True,       # Create Cards: the browser on the right is shown
+    "browser_site": "Jisho",    # ... and the site "Look up" searches
 }
 
 

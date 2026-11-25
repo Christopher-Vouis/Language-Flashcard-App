@@ -6,6 +6,7 @@ cards/
 profiles/
 profiles.json
 settings.json
+browser_data/
 *.wav
 *.jpg
 *.jpeg

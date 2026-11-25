@@ -31,6 +31,7 @@ import srs
 import templates
 from audio import play_wav, stop_wav
 from backdrop import Backdrop
+from browser_pane import BrowserPane
 from card_view import CardView
 from home import HomeScreen
 import subtitles
@@ -292,41 +293,61 @@ class PreviewPanel(ttk.Frame):
 
 
 # ------------------------------------------------------- card editor
-class CardEditor(tk.Toplevel):
-    """Modal dialog: fill in target word / reading / definition for a line and
-    choose its decks. After wait_window(), .result is a dict of the three
-    fields plus "decks" (list of deck ids), or None if cancelled."""
+class CardForm(ttk.Frame):
+    """Fill in target word / reading / definition for a line and choose its decks.
+    Used in a dialog (CardEditor) or right inside a screen (Create Cards: New card).
+    When Save or Cancel is clicked, on_done(result) is called: result is a dict of the
+    three fields plus "decks" (list of deck ids), or None if cancelled."""
 
-    def __init__(self, parent, title: str, sentence: str, meta: str,
-                 audio: str = "", shot: str = "", fields: dict | None = None,
-                 store: CardStore | None = None, decks: list[str] | None = None,
-                 on_decks_changed=None, card_id: str = "", on_images_changed=None):
-        super().__init__(parent)
-        self.title(title)
-        theme.dark_title_bar(self)
-        self.geometry("700x960" if card_id else "640x860")
-        self.minsize(520, 600)
-        self.transient(parent)
-        self.result = None
+    _count = 0
+
+    def __init__(self, parent, sentence: str, meta: str, audio: str = "", shot: str = "",
+                 fields: dict | None = None, store: CardStore | None = None,
+                 decks: list[str] | None = None, on_decks_changed=None, card_id: str = "",
+                 on_images_changed=None, on_done=None, heading: str = "", lookup=None,
+                 image_height: int = 240, deck_columns: int = 3, padding=12):
+        super().__init__(parent, padding=padding)
+        self.on_done = on_done
+        self.lookup = lookup
+        self.deck_columns = deck_columns
         fields = fields or {}
+        CardForm._count += 1
+        self._keys = f"CardForm{CardForm._count}"          # Ctrl+Enter / Esc anywhere in the form
+        self.bind_class(self._keys, "<Control-Return>", lambda e: (self.save(), "break")[1])
+        self.bind_class(self._keys, "<Escape>", lambda e: self.cancel())
 
-        body = ttk.Frame(self, padding=12)
+        # Save/Cancel first, from the bottom: in a short space the picture shrinks instead
+        buttons = ttk.Frame(self)
+        buttons.pack(side="bottom", fill="x", pady=(10, 0))
+        ttk.Button(buttons, text="Cancel", command=self.cancel).pack(side="right")
+        ttk.Button(buttons, text="Save card", command=self.save).pack(side="right", padx=6)
+        ttk.Label(buttons, text="Ctrl+Enter / Esc" if heading else "Ctrl+Enter to save, Esc to cancel",
+                  foreground=theme.SUBTLE).pack(side="left")
+        body = ttk.Frame(self)
         body.pack(fill="both", expand=True)
+        if heading:
+            ttk.Label(body, text=heading, font=("Segoe UI", 14, "bold")).pack(anchor="w", pady=(0, 6))
 
-        self.preview = PreviewPanel(body, image_height=170 if card_id else 240)
+        self.preview = PreviewPanel(body, image_height=image_height)
+        self.preview.configure(padding=0)
         self.preview.pack(fill="both", expand=True)
         self.preview.show("", meta, audio=audio, shot=shot)
         self.preview.text_label.pack_forget()  # the sentence is shown below, selectable
 
-        ttk.Label(body, text="Sentence  (highlight a word, then click “Use selection”)",
+        ttk.Label(body, text="Sentence  (highlight a word)" if heading else
+                  "Sentence  (highlight a word, then click “Use selection”)",
                   foreground=theme.MUTED).pack(anchor="w", pady=(6, 2))
         self.sentence = tk.Text(body, height=3, wrap="word", font=("Segoe UI", 14),
                                 relief="flat", background=theme.SURFACE)
         self.sentence.insert("1.0", sentence)
         self.sentence.config(state="disabled")  # read-only but still selectable
         self.sentence.pack(fill="x")
-        ttk.Button(body, text="↓  Use selection as target word",
-                   command=self._use_selection).pack(anchor="w", pady=(4, 8))
+        sel_row = ttk.Frame(body)
+        sel_row.pack(anchor="w", pady=(4, 8))
+        ttk.Button(sel_row, text="↓  Use as target word" if heading else "↓  Use selection as target word",
+                   command=self._use_selection).pack(side="left")
+        if lookup is not None:
+            ttk.Button(sel_row, text="🔍  Look up", command=self._look_up).pack(side="left", padx=(6, 0))
 
         form = ttk.Frame(body)
         form.pack(fill="x")
@@ -362,18 +383,16 @@ class CardEditor(tk.Toplevel):
             self.images_box.grid(row=4, column=1, sticky="ew", pady=(8, 3))
             self._build_images()
         ttk.Label(form, text="  ", width=12).grid(row=5, column=0)  # keeps label column width
-
-        buttons = ttk.Frame(self, padding=(12, 0, 12, 12))
-        buttons.pack(fill="x")
-        ttk.Button(buttons, text="Cancel", command=self.cancel).pack(side="right")
-        ttk.Button(buttons, text="Save card", command=self.save).pack(side="right", padx=6)
-        ttk.Label(buttons, text="Ctrl+Enter to save, Esc to cancel", foreground=theme.SUBTLE).pack(side="left")
-
-        self.bind("<Control-Return>", lambda e: self.save())
-        self.bind("<Escape>", lambda e: self.cancel())
-        self.protocol("WM_DELETE_WINDOW", self.cancel)
+        self._tag_keys(self)
         self.word_entry.focus_set()
-        self.grab_set()
+
+    def _tag_keys(self, widget):
+        """Give the form's widgets the Ctrl+Enter / Esc keys (also ones added later)."""
+        tags = widget.bindtags()
+        if self._keys not in tags:
+            widget.bindtags((self._keys,) + tags)
+        for child in widget.winfo_children():
+            self._tag_keys(child)
 
     def _build_deck_checks(self):
         for w in self.deck_box.winfo_children():
@@ -384,10 +403,11 @@ class CardEditor(tk.Toplevel):
             var = self.deck_vars.get(d["id"]) or tk.BooleanVar(value=d["id"] in self._initial_decks)
             self.deck_vars[d["id"]] = var
             ttk.Checkbutton(self.deck_box, text=d["name"], variable=var).grid(
-                row=i // 3, column=i % 3, sticky="w", padx=(0, 14), pady=1)
-        n = len(self.store.decks)
+                row=i // self.deck_columns, column=i % self.deck_columns, sticky="w", padx=(0, 14), pady=1)
+        n, cols = len(self.store.decks), self.deck_columns
         ttk.Button(self.deck_box, text="＋  New deck...", command=self._new_deck).grid(
-            row=n // 3, column=n % 3, sticky="w", pady=1)
+            row=n // cols, column=n % cols, sticky="w", pady=1)
+        self._tag_keys(self.deck_box)
 
     def _build_images(self):
         for w in self.images_box.winfo_children():
@@ -426,6 +446,7 @@ class CardEditor(tk.Toplevel):
         row.pack(anchor="w", pady=(6, 0))
         ttk.Button(row, text="＋  Add image...", command=self._add_images).pack(side="left")
         ttk.Label(row, text="Image changes are saved straight away.", foreground=theme.SUBTLE).pack(side="left", padx=10)
+        self._tag_keys(self.images_box)
 
     def _images_changed(self):
         card = self.store.get(self.card_id)
@@ -439,14 +460,14 @@ class CardEditor(tk.Toplevel):
 
     def _delete_image(self, image_id: str, name: str):
         if not messagebox.askyesno("Delete image", f"Delete the picture “{name}” from this card?\n\n"
-                                   "The picture file is deleted.", parent=self):
+                                   "The picture file is deleted.", parent=self.winfo_toplevel()):
             return
         self.store.remove_image(self.card_id, image_id)
         self._images_changed()
 
     def _add_images(self):
         paths = filedialog.askopenfilenames(
-            parent=self, title="Add images to this card",
+            parent=self.winfo_toplevel(), title="Add images to this card",
             filetypes=[("Pictures", "*.jpg *.jpeg *.png *.gif *.webp *.bmp"), ("All files", "*.*")])
         added = False
         for p in paths:
@@ -454,12 +475,12 @@ class CardEditor(tk.Toplevel):
                 self.store.add_image(self.card_id, p)
                 added = True
             except (ValueError, OSError) as err:
-                messagebox.showwarning("Add image", str(err), parent=self)
+                messagebox.showwarning("Add image", str(err), parent=self.winfo_toplevel())
         if added:
             self._images_changed()
 
     def _new_deck(self):
-        deck = new_deck_dialog(self, self.store)
+        deck = new_deck_dialog(self.winfo_toplevel(), self.store)
         if deck:
             self._initial_decks.add(deck["id"])  # tick the deck just created
             self._build_deck_checks()
@@ -479,27 +500,68 @@ class CardEditor(tk.Toplevel):
     def save(self):
         word = self.word_var.get().strip()
         if not word:
-            messagebox.showwarning("Target word needed", "Please enter the target word.", parent=self)
+            messagebox.showwarning("Target word needed", "Please enter the target word.", parent=self.winfo_toplevel())
             self.word_entry.focus_set()
             return
         decks = [d["id"] for d in self.store.decks if self.deck_vars[d["id"]].get()] \
             if self.store is not None else []
         if self.store is not None and not decks:
             messagebox.showwarning("Choose a deck", "Tick at least one deck for this card "
-                                   "(or click New deck... to make one).", parent=self)
+                                   "(or click New deck... to make one).", parent=self.winfo_toplevel())
             return
-        self.result = {
+        result = {
             "target_word": word,
             "reading": self.reading_var.get().strip(),
             "definition": self.def_text.get("1.0", "end").strip(),
             "decks": decks,
         }
         stop_wav()
-        self.destroy()
+        if self.on_done:
+            self.on_done(result)
 
     def cancel(self):
         stop_wav()
+        if self.on_done:
+            self.on_done(None)
+
+    def _look_up(self):
+        """Look the highlighted word (or the target word) up in the browser pane."""
+        try:
+            text = self.sentence.get("sel.first", "sel.last").strip()
+        except tk.TclError:
+            text = ""
+        text = text or self.word_var.get().strip()
+        if not text:
+            messagebox.showinfo("Look up", "Highlight a word in the sentence (or type the target word) "
+                                "first.", parent=self.winfo_toplevel())
+            return
+        self.lookup(text)
+
+
+class CardEditor(tk.Toplevel):
+    """Modal dialog around a CardForm. After wait_window(), .result is the form's
+    result (see CardForm), or None if cancelled."""
+
+    def __init__(self, parent, title: str, sentence: str, meta: str, **kw):
+        super().__init__(parent)
+        self.title(title)
+        theme.dark_title_bar(self)
+        self.geometry("700x960" if kw.get("card_id") else "640x860")
+        self.minsize(520, 600)
+        self.transient(parent)
+        self.result = None
+        self.form = CardForm(self, sentence, meta, on_done=self._done,
+                             image_height=170 if kw.get("card_id") else 240, **kw)
+        self.form.pack(fill="both", expand=True)
+        self.protocol("WM_DELETE_WINDOW", self.form.cancel)
+        self.form.word_entry.focus_set()
+        self.grab_set()
+
+    def _done(self, result):
+        self.result = result
         self.destroy()
+
+
 
 
 # ------------------------------------------------ list window (base class)
@@ -526,7 +588,7 @@ class RecordView:
         ttk.Label(top, textvariable=self.count_var, foreground=theme.MUTED).pack(side="left", padx=10)
         self.add_filters(top)
 
-        main = ttk.PanedWindow(self, orient="horizontal")
+        main = self.main = ttk.PanedWindow(self, orient="horizontal")
         main.pack(fill="both", expand=True, padx=10, pady=4)
 
         table = ttk.Frame(main)
@@ -715,6 +777,57 @@ class SavedLinesPanel(RecordPanel):
         return self.app.store.root
     WINDOW_ATTR = "saved_window"
 
+    def __init__(self, parent, app: "App"):
+        self.form = None           # the New card form, while it's open (in the preview's place)
+        super().__init__(parent, app)
+        self.browser = BrowserPane(self.main, os.path.join(APP_DIR, "browser_data"), app.settings)
+        self._sashes_set = False
+        if app.settings.get("browser_pane"):
+            self.main.add(self.browser, weight=3)
+        self.main.bind("<Configure>", self._first_layout, add=True)
+
+    def _first_layout(self, event=None):
+        """Starting widths: list ~40%, middle ~28%, browser the rest."""
+        w = self.main.winfo_width()
+        if self._sashes_set or w < 200:
+            return
+        self._sashes_set = True
+        self.after_idle(self._place_sashes)
+
+    def _panes(self) -> list[str]:
+        return [str(p) for p in self.main.panes()]
+
+    def _place_sashes(self):
+        w = self.main.winfo_width()
+        try:
+            if len(self._panes()) == 3:
+                self.main.sashpos(0, round(w * 0.40))
+                self.main.sashpos(1, round(w * 0.68))
+            else:
+                self.main.sashpos(0, round(w * 0.58))
+        except tk.TclError:
+            pass
+
+    def browser_shown(self) -> bool:
+        return str(self.browser) in self._panes()
+
+    def toggle_browser(self):
+        if self.browser_shown():
+            self.main.forget(self.browser)
+        else:
+            self.main.add(self.browser, weight=3)
+        self.app.settings.set("browser_pane", self.browser_shown())
+        self.browser_btn.configure(text=self._browser_label())
+        self.after_idle(self._place_sashes)
+
+    def _browser_label(self) -> str:
+        return "Hide browser" if self.browser_shown() else "🌐  Browser"
+
+    def look_up(self, words: str):
+        if not self.browser_shown():
+            self.toggle_browser()
+        self.browser.lookup(words)
+
     def records(self):
         return self.app.store.entries if self.app.store else []
 
@@ -742,6 +855,9 @@ class SavedLinesPanel(RecordPanel):
         ttk.Button(bar, text="✎  Edit text...", command=self.edit_text).pack(side="left", padx=(6, 0))
         menu.add_command(label="＋  New card...", command=self.new_card)
         menu.add_command(label="✎  Edit text...", command=self.edit_text)
+        self.browser_btn = ttk.Button(bar, text="🌐  Browser", command=lambda: self.toggle_browser())
+        self.browser_btn.pack(side="right")
+        self.after_idle(lambda: self.browser_btn.configure(text=self._browser_label()))
         self.tree.bind("<Return>", lambda e: self.new_card())
         self.tree.bind("<F2>", lambda e: self.edit_text())
         self.tree.bind("<Control-n>", lambda e: self.new_card())
@@ -781,34 +897,78 @@ class SavedLinesPanel(RecordPanel):
             self._on_select()
 
     def new_card(self):
+        """The New card form, in place of the preview (next to the list)."""
         e = self.focused()
         if not e:
             messagebox.showinfo("No line selected", "Select a saved line first.", parent=self)
             return
         stop_wav()
+        self.close_form()
         meta = f"{os.path.basename(e['source_file'])}  ·  {tr.fmt_time(e['start'])}"
         cards = self.app.cards
         default = cards.selected_deck if cards.selected_deck != ALL else \
             (cards.decks[0]["id"] if cards.decks else "")
-        dlg = CardEditor(self.dialog_parent(), "New card", e["text"], meta,
-                         audio=self.app.store.abs_path(e.get("audio_clip", "")),
-                         shot=self.app.store.abs_path(e.get("screenshot", "")),
-                         store=cards, decks=[default] if default else [],
-                         on_decks_changed=self.app.on_decks_changed)
-        self.wait_window(dlg)
-        if dlg.result is None:
-            return
+        sashes = self._sash_positions()
+        self.form = CardForm(self.main, e["text"], meta,
+                             audio=self.app.store.abs_path(e.get("audio_clip", "")),
+                             shot=self.app.store.abs_path(e.get("screenshot", "")),
+                             store=cards, decks=[default] if default else [],
+                             on_decks_changed=self.app.on_decks_changed,
+                             on_done=lambda result, e=e: self._form_done(e, result),
+                             heading="New card", lookup=self.look_up, image_height=200,
+                             deck_columns=2, padding=(8, 0, 0, 0))
+        self._swap(self.preview, self.form, sashes)
+        self.form.word_entry.focus_set()
+
+    def _sash_positions(self) -> list[int]:
         try:
-            cards.add(e, self.app.store.root, dlg.result, decks=dlg.result["decks"])
+            return [self.main.sashpos(i) for i in range(len(self._panes()) - 1)]
+        except tk.TclError:
+            return []
+
+    def _swap(self, old, new, sashes):
+        """Put `new` in the middle pane instead of `old`, keeping the pane widths."""
+        self.main.forget(old)
+        if len(self._panes()) > 1:
+            self.main.insert(1, new, weight=2)        # between the list and the browser
+        else:
+            self.main.add(new, weight=2)
+        def restore():
+            for i, pos in enumerate(sashes):
+                try:
+                    self.main.sashpos(i, pos)
+                except tk.TclError:
+                    pass
+        self.update_idletasks()
+        restore()
+        self.after_idle(restore)
+
+    def close_form(self):
+        """Back to the preview (the form's contents are dropped)."""
+        if self.form is None:
+            return
+        stop_wav()
+        form, self.form = self.form, None
+        self._swap(form, self.preview, self._sash_positions())
+        form.destroy()
+
+    def _form_done(self, e: dict, result):
+        self.close_form()
+        if self.tree.winfo_exists():
+            self.tree.focus_set()
+        if result is None:
+            return
+        cards = self.app.cards
+        try:
+            cards.add(e, self.app.store.root, result, decks=result["decks"])
         except OSError as err:
             messagebox.showerror("Could not create card", str(err), parent=self)
             return
-        self.app.on_cards_changed()  # refreshes this window's Cards column too
-        names = ", ".join(cards.deck_name(d) for d in dlg.result["decks"])
-        self.say(f"Card created: {dlg.result['target_word']}  (deck: {names})")
+        self.app.on_cards_changed()  # refreshes this list's Cards column too
+        names = ", ".join(cards.deck_name(d) for d in result["decks"])
+        self.say(f"Card created: {result['target_word']}  (deck: {names})")
 
 
-# ---------------------------------------------------------- cards window
 class CardsWindow(RecordWindow):
     TITLE = "Cards"
     NOUN = ("card", "cards")
@@ -2961,6 +3121,7 @@ class App(tk.Tk):
                     win.close()
             self.profile = p
             self.store = SavedStore(self.profiles.saved_dir(p))
+            self.saved_window.close_form()
             self.saved_window.preview.clear()
             self.saved_window.refresh()            # Create Cards: this profile's saved lines
             self.cards = CardStore(self.profiles.cards_dir(p))
